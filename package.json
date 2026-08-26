@@ -1,0 +1,21 @@
+{
+  "name": "o2-universe-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:mobile": "turbo run dev --filter=@o2/mobile",
+    "dev:api": "turbo run dev --filter=@o2/api",
+    "dev:admin": "turbo run dev --filter=@o2/admin",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.4",
+    "typescript": "^5.8.2",
+    "prettier": "^3.5.3"
+  },
+  "packageManager": "pnpm@11.24.0"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@o2/game-core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@o2/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@o2/config": "workspace:*",
+    "typescript": "^5.8.2"
+  }
+}
