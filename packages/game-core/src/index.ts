@@ -1,3 +1,3 @@
 export * from './common/engine.interface';
-
-export const GAME_CORE_VERSION = '0.1.0';
+export * from './companion/tuning.config';
+export * from './companion/simulation.engine';

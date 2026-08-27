@@ -6,6 +6,7 @@ import { validateEnvironment } from './common/config.schema';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { ProfileModule } from './profile/profile.module';
+import { CompanionModule } from './companion/companion.module';
 import { HealthModule } from './modules/health/health.module';
 import { EconomyModule } from './modules/economy/economy.module';
 import { SocialModule } from './modules/social/social.module';
@@ -33,6 +34,8 @@ import { NotificationModule } from './modules/notification/notification.module';
     // Phase 2 Identity, Auth & Onboarding Modules
     AuthModule,
     ProfileModule,
+    // Phase 3 Living Companion / Tamagotchi Engine
+    CompanionModule,
     // Future Phase Domain Shells
     EconomyModule,
     SocialModule,

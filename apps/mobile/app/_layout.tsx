@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { DirectionProvider, ToastProvider, colors } from '@o2/ui';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
+import { CompanionProvider } from '../src/context/CompanionContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -54,8 +55,10 @@ export default function RootLayout() {
     <DirectionProvider initialDirection="rtl">
       <ToastProvider>
         <AuthProvider>
-          <StatusBar style="light" />
-          <RootNavigation />
+          <CompanionProvider>
+            <StatusBar style="light" />
+            <RootNavigation />
+          </CompanionProvider>
         </AuthProvider>
       </ToastProvider>
     </DirectionProvider>

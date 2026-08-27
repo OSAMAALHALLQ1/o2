@@ -1,4 +1,4 @@
-// O2 Universe — Prisma Schema (Phase 2 Identity & Companion Onboarding Domain)
+// O2 Universe — Prisma Schema (Phase 2 & Phase 3 Living Companion Domain)
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -39,6 +39,8 @@ model User {
   identities        AuthIdentity[]
   sessions          UserSession[]
   profile           PlayerProfile?
+  careState         CompanionCareState?
+  careActionLogs    CompanionActionLog[]
 
   @@map("users")
 }
@@ -133,4 +135,39 @@ model Character {
   profiles          PlayerProfile[]
 
   @@map("characters")
+}
+
+// Phase 3: Living Companion Care & Idempotency Models
+model CompanionCareState {
+  id                String       @id @default(uuid())
+  userId            String       @unique
+  hunger            Float        @default(80.0)
+  cleanliness       Float        @default(80.0)
+  energy            Float        @default(80.0)
+  mood              Float        @default(80.0)
+  isSleeping        Boolean      @default(false)
+  sleepStartedAt    DateTime?
+  lastSimulatedAt   DateTime     @default(now())
+  lastInteractionAt DateTime     @default(now())
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("companion_care_states")
+}
+
+model CompanionActionLog {
+  id                String       @id @default(uuid())
+  userId            String
+  clientActionId    String
+  actionType        String
+  appliedAt         DateTime     @default(now())
+  responsePayload   Json
+
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clientActionId])
+  @@index([userId])
+  @@map("companion_action_logs")
 }

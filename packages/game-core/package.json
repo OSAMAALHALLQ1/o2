@@ -12,7 +12,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 10",
-    "test": "node --test"
+    "test": "node --experimental-strip-types --test test/companion.simulation.spec.ts"
   },
   "dependencies": {
     "@o2/types": "workspace:*"

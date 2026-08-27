@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   ScreenContainer,
@@ -18,32 +18,62 @@ import {
 } from '@o2/ui';
 import {
   mockBalances,
-  mockCompanion,
   mockParty,
   mockDailyMissions,
 } from '../../src/data/mockData';
+import { useAuth } from '../../src/context/AuthContext';
+import { useCompanion } from '../../src/context/CompanionContext';
+import { CompanionCareActionType } from '@o2/types';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const { profile } = useAuth();
+  const { companionState, isActing, activeReaction, performAction } = useCompanion();
   const { showToast } = useToast();
   const [showRewardModal, setShowRewardModal] = useState(false);
 
-  const handleCompanionTap = () => {
-    showToast({
-      type: 'info',
-      title: '💖 مرحباً!',
-      message: `${mockCompanion.customName} سعيد جداً بتفاعلك معه!`,
-    });
+  const handleAction = async (action: CompanionCareActionType) => {
+    try {
+      const res = await performAction(action);
+      if (res?.success) {
+        showToast({
+          type: 'success',
+          title: '✨ تم بنجاح!',
+          message: `تفاعل ${companionState?.nameAr || 'الرفيق'} وسعد باهتمامك!`,
+        });
+      }
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'تنبيه',
+        message: err.message || 'تعذر تطبيق الإجراء في الوقت الحالي',
+      });
+    }
   };
+
+  const handleCompanionTap = () => {
+    handleAction('PET');
+  };
+
+  const hunger = Math.round(companionState?.hunger ?? 80);
+  const cleanliness = Math.round(companionState?.cleanliness ?? 80);
+  const energy = Math.round(companionState?.energy ?? 80);
+  const mood = Math.round(companionState?.mood ?? 80);
+  const isSleeping = companionState?.isSleeping ?? false;
 
   return (
     <ScreenContainer scrollable style={styles.container}>
       {/* Header Bar: Profile preview & Currency Bar */}
       <View style={styles.header}>
         <View style={styles.userHeader}>
-          <AvatarFrame size={42} avatarText="أنس" isOnline rarity="EPIC" />
+          <AvatarFrame
+            size={42}
+            avatarText={profile?.displayName || profile?.username || 'لاعب O2'}
+            isOnline
+            rarity="EPIC"
+          />
           <View style={styles.userInfo}>
-            <Text style={styles.displayName}>أنس — سفير O2</Text>
+            <Text style={styles.displayName}>{profile?.displayName || profile?.username || 'سفير O2'}</Text>
             <Badge label="صالة الأصدقاء 🔥" variant="gold" size="sm" />
           </View>
         </View>
@@ -59,42 +89,108 @@ export default function HomeScreen() {
       <Card variant="elevated" style={styles.heroCard}>
         <View style={styles.loungeHeader}>
           <Text style={styles.loungeTitle}>🏠 صالة O2 الخاصة بك</Text>
-          <Badge label="المزاج: ممتاز ✨" variant="success" size="sm" />
+          <Badge
+            label={isSleeping ? 'نائم 💤' : `الحالة: ${companionState?.expression || 'مبتهج ✨'}`}
+            variant={isSleeping ? 'secondary' : 'success'}
+            size="sm"
+          />
         </View>
 
         <View style={styles.companionCenter}>
           <CompanionRenderer
-            characterSlug={mockCompanion.characterSlug}
-            mood={mockCompanion.computedMoodCategory}
+            characterSlug={companionState?.characterSlug || 'panda_bamboo_master'}
+            expression={companionState?.expression || 'HAPPY'}
+            reaction={activeReaction}
+            isSleeping={isSleeping}
             equippedCosmetics={{ hatSlug: 'golden_crown' }}
-            currentAnimation="idle"
             onTap={handleCompanionTap}
-            scale={1.1}
+            scale={1.15}
           />
-          <Text style={styles.companionName}>{mockCompanion.customName}</Text>
+          <Text style={styles.companionName}>
+            {companionState?.nameAr || 'باندا بامبو'}
+          </Text>
+          <Text style={styles.companionArchetype}>
+            {companionState?.archetype || 'حارس الغابة'}
+          </Text>
         </View>
 
-        {/* Companion Needs Quick Meters (Visual Placeholder) */}
+        {/* Live Needs Quick Meters */}
         <View style={styles.metersRow}>
           <View style={styles.meterItem}>
             <Text style={styles.meterEmoji}>🍗</Text>
-            <Text style={styles.meterVal}>{mockCompanion.hunger}%</Text>
+            <Text style={styles.meterVal}>{hunger}%</Text>
             <Text style={styles.meterLabel}>شبع</Text>
           </View>
           <View style={styles.meterItem}>
             <Text style={styles.meterEmoji}>🛁</Text>
-            <Text style={styles.meterVal}>{mockCompanion.cleanliness}%</Text>
+            <Text style={styles.meterVal}>{cleanliness}%</Text>
             <Text style={styles.meterLabel}>نظافة</Text>
           </View>
           <View style={styles.meterItem}>
             <Text style={styles.meterEmoji}>⚡</Text>
-            <Text style={styles.meterVal}>{mockCompanion.energy}%</Text>
+            <Text style={styles.meterVal}>{energy}%</Text>
             <Text style={styles.meterLabel}>طاقة</Text>
           </View>
           <View style={styles.meterItem}>
             <Text style={styles.meterEmoji}>💖</Text>
-            <Text style={styles.meterVal}>{mockCompanion.mood}%</Text>
+            <Text style={styles.meterVal}>{mood}%</Text>
             <Text style={styles.meterLabel}>سعادة</Text>
+          </View>
+        </View>
+
+        {/* Phase 3 Interactive Companion Care Action Bar */}
+        <View style={styles.careActionsContainer}>
+          <Text style={styles.careActionsTitle}>✨ أنشطة العناية بالرفيق</Text>
+          <View style={styles.careButtonsGrid}>
+            <TouchableOpacity
+              style={[styles.careBtn, isSleeping && styles.careBtnDisabled]}
+              disabled={isActing || isSleeping}
+              onPress={() => handleAction('FEED')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.careBtnEmoji}>🍗</Text>
+              <Text style={styles.careBtnLabel}>إطعام</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.careBtn, isSleeping && styles.careBtnDisabled]}
+              disabled={isActing || isSleeping}
+              onPress={() => handleAction('CLEAN')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.careBtnEmoji}>🛁</Text>
+              <Text style={styles.careBtnLabel}>تنظيف</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.careBtn, (isSleeping || energy < 15) && styles.careBtnDisabled]}
+              disabled={isActing || isSleeping || energy < 15}
+              onPress={() => handleAction('PLAY')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.careBtnEmoji}>🎮</Text>
+              <Text style={styles.careBtnLabel}>لعب</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.careBtn, isSleeping && styles.careBtnDisabled]}
+              disabled={isActing || isSleeping}
+              onPress={() => handleAction('PET')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.careBtnEmoji}>💖</Text>
+              <Text style={styles.careBtnLabel}>مداعبة</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.careBtn, isSleeping ? styles.careBtnWake : styles.careBtnSleep]}
+              disabled={isActing}
+              onPress={() => handleAction(isSleeping ? 'WAKE' : 'SLEEP')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.careBtnEmoji}>{isSleeping ? '☀️' : '🌙'}</Text>
+              <Text style={styles.careBtnLabel}>{isSleeping ? 'إيقاظ' : 'نوم'}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Card>
@@ -247,6 +343,11 @@ const styles = StyleSheet.create({
     fontWeight: typography.fontWeight.bold,
     color: colors.brand.accent,
   },
+  companionArchetype: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.xs,
+    color: colors.text.secondary,
+  },
   metersRow: {
     flexDirection: 'row',
     width: '100%',
@@ -273,6 +374,53 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.body,
     fontSize: typography.fontSize['2xs'],
     color: colors.text.secondary,
+  },
+  careActionsContainer: {
+    width: '100%',
+    gap: spacing.xs + 2,
+    marginTop: spacing.xs,
+  },
+  careActionsTitle: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: typography.fontSize.xs,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.text.secondary,
+  },
+  careButtonsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: spacing.xs,
+  },
+  careBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaces.surfaceElevated,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.surfaces.borderHighlight,
+    gap: 3,
+  },
+  careBtnSleep: {
+    borderColor: colors.rarity.epic,
+  },
+  careBtnWake: {
+    borderColor: colors.brand.accent,
+    backgroundColor: '#231d3d',
+  },
+  careBtnDisabled: {
+    opacity: 0.4,
+  },
+  careBtnEmoji: {
+    fontSize: 20,
+  },
+  careBtnLabel: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: typography.fontSize['2xs'],
+    color: colors.text.primary,
+    fontWeight: typography.fontWeight.bold,
   },
   partyCard: {
     gap: spacing.md,

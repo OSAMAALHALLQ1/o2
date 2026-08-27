@@ -89,7 +89,7 @@ export default function ProfileScreen() {
           <Text style={styles.companionEmoji}>🐼</Text>
           <View style={styles.companionInfo}>
             <Text style={styles.companionName}>
-              {profile?.selectedCharacterId ? 'رفيقك الدائم المعتمد' : mockCompanion.customName}
+              {profile?.selectedCharacterId ? 'رفيقك الدائم المعتمد' : (mockCompanion.nameAr || 'باندا بامبو')}
             </Text>
             <Text style={styles.companionDesc}>
               رفيق O2 الدائم — جاهز لخوض الجولات والألعاب الجماعية

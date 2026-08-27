@@ -37,18 +37,23 @@ export const mockBalances: WalletBalancesDto = {
 };
 
 export const mockCompanion: CompanionCareStateDto = {
+  userId: 'usr_mock_01',
   characterId: 'char_panda_01',
-  characterSlug: 'panda_mascot',
-  customName: 'بامبو المحبوب',
+  characterSlug: 'panda_bamboo_master',
+  nameAr: 'باندا بامبو',
+  nameEn: 'Panda Bamboo',
+  archetype: 'حارس الغابة',
+  placeholderAsset: 'panda_mascot',
   hunger: 88,
   cleanliness: 92,
   energy: 80,
   mood: 95,
-  computedMoodCategory: 'happy',
-  lastFedAt: new Date(Date.now() - 3600000).toISOString(),
-  lastBathedAt: new Date(Date.now() - 7200000).toISOString(),
-  lastSleptAt: new Date(Date.now() - 14400000).toISOString(),
-  lastInteractedAt: new Date().toISOString(),
+  isSleeping: false,
+  sleepStartedAt: null,
+  lastSimulatedAt: new Date(Date.now() - 3600000).toISOString(),
+  lastInteractionAt: new Date().toISOString(),
+  expression: 'VERY_HAPPY',
+  updatedAt: new Date().toISOString(),
 };
 
 export const mockGames: GameDefinitionDto[] = [
