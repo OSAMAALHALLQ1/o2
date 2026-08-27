@@ -133,6 +133,9 @@ importers:
       '@types/node':
         specifier: ^22.13.9
         version: 22.20.1
+      pg-gateway:
+        specifier: 0.3.0-beta.4
+        version: 0.3.0-beta.4
       prisma:
         specifier: ^6.4.1
         version: 6.19.3(typescript@5.9.3)
@@ -4487,6 +4490,9 @@ packages:
 
   perfect-debounce@1.0.0:
     resolution: {integrity: sha512-xCy9V055GLEqoFaHoC1SoLIaLmWctgCUaBaWxDZ7/Zx4CTyX7cJQLJOok/orfjZAh9kEYpjJa4d0KcJmCbctZA==}
+
+  pg-gateway@0.3.0-beta.4:
+    resolution: {integrity: sha512-CTjsM7Z+0Nx2/dyZ6r8zRsc3f9FScoD5UAOlfUx1Fdv/JOIWvRbF7gou6l6vP+uypXQVoYPgw8xZDXgMGvBa4Q==}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -10609,6 +10615,8 @@ snapshots:
   pathe@2.0.3: {}
 
   perfect-debounce@1.0.0: {}
+
+  pg-gateway@0.3.0-beta.4: {}
 
   picocolors@1.1.1: {}
 

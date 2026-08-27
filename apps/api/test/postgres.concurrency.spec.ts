@@ -131,8 +131,22 @@ describe('Phase 2 PostgreSQL Concurrency & Database Engine Integrity', () => {
       assert.equal(failures[0].error, 'SECURITY_ALERT_REPLAY_DETECTED');
 
       // Verify PostgreSQL DB state: only ONE child record was inserted before family revocation
-      const tokens = await db.query(`SELECT * FROM "refresh_token_records" WHERE "sessionId" = $1`, [sessionId]);
+      const tokens = await db.query(`SELECT * FROM "refresh_token_records" WHERE "sessionId" = $1 ORDER BY "createdAt" ASC`, [sessionId]);
       assert.equal(tokens.rows.length, 2, 'Initial token + exactly 1 child token in database');
+
+      const [recT0, recT1] = tokens.rows as any[];
+
+      // T0 State: Consumed by Request 1
+      assert.ok(recT0.consumedAt !== null, 'T0 consumedAt must be non-null');
+      assert.equal(recT0.replacedByTokenId, recT1.id, 'T0 points to T1');
+
+      // T1 State: Revoked by family revocation when Request 2 replayed T0
+      assert.ok(recT1.revokedAt !== null, 'T1 revokedAt must be non-null after replay detection');
+
+      // Session State: Revoked
+      const sessionRes = await db.query(`SELECT * FROM "user_sessions" WHERE "id" = $1`, [sessionId]);
+      const sessionRow = sessionRes.rows[0] as any;
+      assert.ok(sessionRow.revokedAt !== null, 'Session revokedAt must be non-null');
     });
   });
 
