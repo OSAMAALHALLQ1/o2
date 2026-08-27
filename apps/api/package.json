@@ -8,7 +8,7 @@
     "build": "nest build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 10",
-    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/onboarding.spec.ts test/oauth.spec.ts"
+    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/refresh.spec.ts test/jwt.spec.ts test/onboarding.spec.ts test/oauth.spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.11",
@@ -17,6 +17,7 @@
     "@nestjs/jwt": "^11.0.0",
     "@nestjs/platform-express": "^11.0.11",
     "@nestjs/throttler": "^6.4.0",
+    "@node-rs/argon2": "^2.1.0",
     "@o2/game-core": "workspace:*",
     "@o2/types": "workspace:*",
     "@prisma/client": "^6.4.1",

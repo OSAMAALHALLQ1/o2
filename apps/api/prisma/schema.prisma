@@ -60,23 +60,41 @@ model AuthIdentity {
 }
 
 model UserSession {
-  id                String        @id @default(uuid())
+  id                String               @id @default(uuid())
   userId            String
-  refreshTokenHash  String        // Secure SHA-256 hash of the rotating refresh token
-  familyId          String        // Refresh token family UUID for rotation and replay revocation
-  deviceInfo        String?       // OS, Client Model, App Version
+  familyId          String               // Refresh token family UUID for rotation and replay revocation
+  deviceInfo        String?              // OS, Client Model, App Version
   ipAddress         String?
   userAgent         String?
   expiresAt         DateTime
-  lastUsedAt        DateTime      @default(now())
+  lastUsedAt        DateTime             @default(now())
   revokedAt         DateTime?
-  createdAt         DateTime      @default(now())
+  createdAt         DateTime             @default(now())
 
-  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens     RefreshTokenRecord[]
 
   @@index([userId])
   @@index([familyId])
   @@map("user_sessions")
+}
+
+model RefreshTokenRecord {
+  id                String        @id @default(uuid())
+  sessionId         String
+  tokenHash         String        @unique // Deterministic SHA-256 hash of rotating refresh token
+  familyId          String        // Denormalized familyId for immediate family-wide revocation
+  consumedAt        DateTime?     // Non-null once used in rotation
+  revokedAt         DateTime?     // Set if session/family is invalidated
+  replacedByTokenId String?       // Pointer to newly issued child token
+  expiresAt         DateTime
+  createdAt         DateTime      @default(now())
+
+  session           UserSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([familyId])
+  @@map("refresh_token_records")
 }
 
 model PlayerProfile {

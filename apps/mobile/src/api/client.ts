@@ -6,17 +6,27 @@ interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
 }
 
+interface RefreshSubscriber {
+  resolve: (token: string) => void;
+  reject: (error: Error) => void;
+}
+
 class ApiClient {
   private isRefreshing = false;
-  private refreshSubscribers: ((token: string) => void)[] = [];
+  private refreshSubscribers: RefreshSubscriber[] = [];
 
   private onTokenRefreshed(token: string) {
-    this.refreshSubscribers.forEach((callback) => callback(token));
+    this.refreshSubscribers.forEach((sub) => sub.resolve(token));
     this.refreshSubscribers = [];
   }
 
-  private addRefreshSubscriber(callback: (token: string) => void) {
-    this.refreshSubscribers.push(callback);
+  private onRefreshFailed(error: Error) {
+    this.refreshSubscribers.forEach((sub) => sub.reject(error));
+    this.refreshSubscribers = [];
+  }
+
+  private addRefreshSubscriber(resolve: (token: string) => void, reject: (error: Error) => void) {
+    this.refreshSubscribers.push({ resolve, reject });
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
@@ -39,7 +49,7 @@ class ApiClient {
       headers,
     });
 
-    // Handle 401 Unauthorized with token refresh rotation
+    // Single-Flight 401 Refresh Mutex Queue
     if (response.status === 401 && !options.skipAuth && endpoint !== '/auth/refresh' && endpoint !== '/auth/login') {
       if (!this.isRefreshing) {
         this.isRefreshing = true;
@@ -74,27 +84,33 @@ class ApiClient {
             throw new Error(errBody.message || `API Error: ${retryRes.status}`);
           }
           return retryRes.json();
-        } catch (err) {
+        } catch (err: any) {
           this.isRefreshing = false;
           await AuthTokenStorage.clearTokens();
+          this.onRefreshFailed(err instanceof Error ? err : new Error(String(err)));
           throw err;
         }
       } else {
-        // Queue concurrent requests while refreshing
+        // Queue concurrent requests while single-flight refresh is executing
         return new Promise<T>((resolve, reject) => {
-          this.addRefreshSubscriber(async (newToken: string) => {
-            try {
-              headers['Authorization'] = `Bearer ${newToken}`;
-              const retryRes = await fetch(url, { ...options, headers });
-              if (!retryRes.ok) {
-                const errBody = await retryRes.json().catch(() => ({}));
-                return reject(new Error(errBody.message || `API Error: ${retryRes.status}`));
+          this.addRefreshSubscriber(
+            async (newToken: string) => {
+              try {
+                headers['Authorization'] = `Bearer ${newToken}`;
+                const retryRes = await fetch(url, { ...options, headers });
+                if (!retryRes.ok) {
+                  const errBody = await retryRes.json().catch(() => ({}));
+                  return reject(new Error(errBody.message || `API Error: ${retryRes.status}`));
+                }
+                resolve(await retryRes.json());
+              } catch (retryErr) {
+                reject(retryErr);
               }
-              resolve(await retryRes.json());
-            } catch (retryErr) {
-              reject(retryErr);
-            }
-          });
+            },
+            (error: Error) => {
+              reject(error);
+            },
+          );
         });
       }
     }

@@ -8,6 +8,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ProfileService } from './profile.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SetUsernameDto, CheckUsernameDto } from './dto/username.dto';
@@ -24,6 +25,7 @@ export class ProfileController {
   }
 
   @Post('me/username/check')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async checkUsername(@Body() dto: CheckUsernameDto) {
     return this.profileService.checkUsernameAvailability(dto.username);

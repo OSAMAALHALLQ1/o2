@@ -1,64 +1,48 @@
 import * as crypto from 'crypto';
+import { hash, verify } from '@node-rs/argon2';
 
 /**
- * Secure password hashing utility implementing constant-time comparison,
- * random 32-byte cryptographic salt, and Scrypt/Argon2id-style memory-hard parameters.
+ * Production-grade Argon2id password hashing and verification utility.
+ * Implements RFC 9106 recommended parameters:
+ * - Algorithm: Argon2id (variant 2)
+ * - Memory Cost: 19456 KiB (19 MiB)
+ * - Time Cost: 3 iterations
+ * - Parallelism (Threads): 4 lanes
+ * - Output Length: 32 bytes
  */
 export class PasswordUtil {
-  private static readonly KEY_LEN = 64;
-  private static readonly SALT_LEN = 32;
-  private static readonly SCRYPT_OPTIONS: crypto.ScryptOptions = {
-    N: 16384, // CPU/memory cost parameter
-    r: 8,     // Block size parameter
-    p: 1,     // Parallelization parameter
-    maxmem: 64 * 1024 * 1024, // 64 MB
+  public static readonly ARGON2_CONFIG = {
+    algorithm: 2,      // Algorithm.Argon2id
+    memoryCost: 19456, // 19 MiB
+    timeCost: 3,       // 3 iterations
+    parallelism: 4,    // 4 threads
+    outputLen: 32,     // 32-byte key
   };
 
   /**
-   * Hashes a plaintext password with a unique cryptographic salt.
-   * Returns a format string: `$argon2id$v=19$m=65536,t=3,p=1$<salt_hex>$<hash_hex>`
+   * Hashes a plaintext password using official Argon2id N-API bindings.
    */
   static async hash(password: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const salt = crypto.randomBytes(this.SALT_LEN).toString('hex');
-      crypto.scrypt(password, salt, this.KEY_LEN, this.SCRYPT_OPTIONS, (err, derivedKey) => {
-        if (err) return reject(err);
-        const hashHex = derivedKey.toString('hex');
-        resolve(`$argon2id$v=19$m=65536,t=3,p=1$${salt}$${hashHex}`);
-      });
-    });
+    return hash(password, this.ARGON2_CONFIG);
   }
 
   /**
-   * Constant-time verification of a plaintext password against a stored hash string.
+   * Verifies a plaintext password against a stored Argon2id hash.
+   * Handles malformed hashes safely by catching errors and returning false.
    */
   static async verify(password: string, storedHash: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      if (!storedHash || !storedHash.startsWith('$argon2id$')) {
-        return resolve(false);
-      }
-
-      const parts = storedHash.split('$');
-      if (parts.length !== 6) {
-        return resolve(false);
-      }
-
-      const salt = parts[4];
-      const originalHashHex = parts[5];
-
-      crypto.scrypt(password, salt, this.KEY_LEN, this.SCRYPT_OPTIONS, (err, derivedKey) => {
-        if (err) return resolve(false);
-        const originalBuffer = Buffer.from(originalHashHex, 'hex');
-        if (originalBuffer.length !== derivedKey.length) {
-          return resolve(false);
-        }
-        resolve(crypto.timingSafeEqual(originalBuffer, derivedKey));
-      });
-    });
+    if (!storedHash || typeof storedHash !== 'string' || !storedHash.startsWith('$argon2id$')) {
+      return false;
+    }
+    try {
+      return await verify(storedHash, password);
+    } catch {
+      return false;
+    }
   }
 
   /**
-   * Computes a SHA-256 hash of a refresh token for safe storage at rest.
+   * Computes a deterministic SHA-256 hash of a refresh token for lookup & storage at rest.
    */
   static hashRefreshToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');

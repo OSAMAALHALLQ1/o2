@@ -1,110 +1,93 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { PasswordUtil } from '../src/auth/crypto/password.util.ts';
+import { normalizeEmail } from '../src/auth/utils/email.util.ts';
 
-describe('Phase 2: Authentication & Security Engine', () => {
-  describe('Password Hashing & Crypto Protection', () => {
-    it('should securely hash password with unique salt and memory-hard algorithm', async () => {
-      const rawPassword = 'SuperSecretPassword123!';
-      const hash1 = await PasswordUtil.hash(rawPassword);
-      const hash2 = await PasswordUtil.hash(rawPassword);
+describe('Phase 2 Security: Argon2id Hashing & Email Normalization', () => {
+  describe('1. Argon2id Password Hashing Engine', () => {
+    it('should generate valid RFC 9106 Argon2id hash containing $argon2id$ identifier', async () => {
+      const password = 'CorrectHorseBatteryStaple2026!';
+      const encoded = await PasswordUtil.hash(password);
 
-      assert.ok(hash1.startsWith('$argon2id$'), 'Hash should contain argon2id algorithm identifier');
-      assert.notEqual(hash1, hash2, 'Salts must ensure hashes of identical passwords are distinct');
+      assert.ok(encoded.startsWith('$argon2id$'), 'Must use Argon2id variant');
+      assert.ok(encoded.includes('m=19456,t=3,p=4'), 'Must match RFC 9106 memory (19MiB), time (3), parallelism (4)');
     });
 
-    it('should verify correct password using constant-time comparison', async () => {
-      const rawPassword = 'CorrectPassword123!';
-      const hash = await PasswordUtil.hash(rawPassword);
+    it('should produce distinct hashes for identical passwords due to cryptographic salting', async () => {
+      const password = 'IdenticalPassword123!';
+      const hash1 = await PasswordUtil.hash(password);
+      const hash2 = await PasswordUtil.hash(password);
 
-      const isValid = await PasswordUtil.verify(rawPassword, hash);
+      assert.notEqual(hash1, hash2, 'Salts must ensure distinct hashes');
+    });
+
+    it('should verify valid password using native Argon2 verification API', async () => {
+      const password = 'ValidSecurePassword99#';
+      const hash = await PasswordUtil.hash(password);
+
+      const isValid = await PasswordUtil.verify(password, hash);
       assert.equal(isValid, true, 'Valid password must verify true');
+    });
+
+    it('should reject incorrect password', async () => {
+      const password = 'ValidSecurePassword99#';
+      const hash = await PasswordUtil.hash(password);
 
       const isInvalid = await PasswordUtil.verify('WrongPassword123!', hash);
-      assert.equal(isInvalid, false, 'Invalid password must verify false');
+      assert.equal(isInvalid, false, 'Incorrect password must verify false');
     });
 
-    it('should generate secure SHA-256 hash for refresh token storage at rest', () => {
-      const rawToken = 'o2_refresh_raw_token_xyz_123';
-      const hash1 = PasswordUtil.hashRefreshToken(rawToken);
-      const hash2 = PasswordUtil.hashRefreshToken(rawToken);
-
-      assert.equal(hash1, hash2, 'SHA-256 hash must be deterministic for lookup');
-      assert.notEqual(hash1, rawToken, 'Hash must not expose raw token');
-      assert.equal(hash1.length, 64, 'SHA-256 hex string should be 64 characters long');
-    });
-
-    it('should verify refresh token constant-time equality', () => {
-      const rawToken = 'o2_refresh_raw_token_xyz_123';
-      const storedHash = PasswordUtil.hashRefreshToken(rawToken);
-
-      assert.equal(PasswordUtil.verifyRefreshToken(rawToken, storedHash), true);
-      assert.equal(PasswordUtil.verifyRefreshToken('different_token', storedHash), false);
+    it('should safely handle malformed or truncated stored hashes without crashing', async () => {
+      assert.equal(await PasswordUtil.verify('test', ''), false);
+      assert.equal(await PasswordUtil.verify('test', 'not-a-hash'), false);
+      assert.equal(await PasswordUtil.verify('test', '$argon2id$invalid_payload'), false);
+      assert.equal(await PasswordUtil.verify('test', '$argon2id$v=19$m=19456$truncated'), false);
     });
   });
 
-  describe('Session Token Rotation & Replay Attack Defense Logic', () => {
-    it('should simulate family token rotation and detect reuse', () => {
-      interface MockSession {
-        id: string;
-        familyId: string;
-        tokenHash: string;
-        isRevoked: boolean;
-      }
+  describe('2. Email Normalization & Identity Constraints', () => {
+    it('should deterministically normalize email addresses by trimming and lowercasing', () => {
+      assert.equal(normalizeEmail('  ANAS@O2.COM  '), 'anas@o2.com');
+      assert.equal(normalizeEmail('Player.One@Gmail.Com'), 'player.one@gmail.com');
+      assert.equal(normalizeEmail('support@O2Universe.APP'), 'support@o2universe.app');
+    });
 
-      const sessions: MockSession[] = [];
+    it('should detect email duplicate collisions under case-insensitive normalization', () => {
+      const registeredIdentities = new Set<string>();
 
-      // Step 1: Initial Login - Session Issued
-      const familyId = 'fam_device_001';
-      const token1 = 'refresh_token_v1';
-      sessions.push({
-        id: 'sess_1',
-        familyId,
-        tokenHash: PasswordUtil.hashRefreshToken(token1),
-        isRevoked: false,
-      });
+      const registerEmail = (email: string): boolean => {
+        const normalized = normalizeEmail(email);
+        if (registeredIdentities.has(normalized)) {
+          return false;
+        }
+        registeredIdentities.add(normalized);
+        return true;
+      };
 
-      assert.equal(sessions.length, 1);
-      assert.equal(sessions[0].isRevoked, false);
+      assert.equal(registerEmail('Anas@O2.com'), true, 'First registration succeeds');
+      assert.equal(registerEmail('anas@o2.com'), false, 'Lowercase duplicate rejected');
+      assert.equal(registerEmail('ANAS@O2.COM'), false, 'Uppercase duplicate rejected');
+      assert.equal(registerEmail('  anas@o2.com  '), false, 'Untrimmed duplicate rejected');
+    });
+  });
 
-      // Step 2: Legitimate Token Refresh - Rotation to token2
-      const token1Hash = PasswordUtil.hashRefreshToken(token1);
-      const activeSession = sessions.find((s) => s.tokenHash === token1Hash && !s.isRevoked);
-      assert.ok(activeSession, 'Active session found');
+  describe('3. Deterministic SHA-256 Token Storage at Rest', () => {
+    it('should compute 64-character SHA-256 hex hash for refresh tokens', () => {
+      const rawToken = 'o2_rt_8fbc9823472034982374982374982374';
+      const hash1 = PasswordUtil.hashRefreshToken(rawToken);
+      const hash2 = PasswordUtil.hashRefreshToken(rawToken);
 
-      // Revoke old session
-      activeSession.isRevoked = true;
+      assert.equal(hash1, hash2);
+      assert.equal(hash1.length, 64);
+      assert.notEqual(hash1, rawToken);
+    });
 
-      // Issue new session in same family
-      const token2 = 'refresh_token_v2';
-      sessions.push({
-        id: 'sess_2',
-        familyId: activeSession.familyId,
-        tokenHash: PasswordUtil.hashRefreshToken(token2),
-        isRevoked: false,
-      });
+    it('should constant-time verify refresh tokens', () => {
+      const rawToken = 'o2_rt_8fbc9823472034982374982374982374';
+      const storedHash = PasswordUtil.hashRefreshToken(rawToken);
 
-      assert.equal(sessions.filter((s) => !s.isRevoked).length, 1);
-
-      // Step 3: Malicious Token Replay Attack using already-rotated token1!
-      const replayedTokenHash = PasswordUtil.hashRefreshToken(token1);
-      const replayedSession = sessions.find((s) => s.tokenHash === replayedTokenHash);
-
-      assert.ok(replayedSession, 'Replayed session found in history');
-      assert.equal(replayedSession.isRevoked, true, 'Replayed token was already revoked');
-
-      // Replay Detection Trigger: Revoke ALL sessions belonging to familyId!
-      sessions
-        .filter((s) => s.familyId === replayedSession.familyId)
-        .forEach((s) => {
-          s.isRevoked = true;
-        });
-
-      // Assert all sessions in the family are now revoked
-      const remainingActiveSessions = sessions.filter(
-        (s) => s.familyId === familyId && !s.isRevoked,
-      );
-      assert.equal(remainingActiveSessions.length, 0, 'Family replay revocation wiped all family sessions');
+      assert.equal(PasswordUtil.verifyRefreshToken(rawToken, storedHash), true);
+      assert.equal(PasswordUtil.verifyRefreshToken('wrong_token', storedHash), false);
     });
   });
 });

@@ -1,63 +1,71 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordUtil } from './crypto/password.util';
-import { OAuthAdapter } from './adapters/oauth.adapter';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { GoogleAuthDto, AppleAuthDto } from './dto/oauth.dto';
 import { AuthSessionResponse, AuthTokens } from '@o2/types';
+import { OAuthAdapter } from './adapters/oauth.adapter';
+
+import { normalizeEmail } from './utils/email.util';
+
+export { normalizeEmail };
+
+export const ACCESS_TOKEN_EXPIRATION = '15m';
+export const REFRESH_TOKEN_EXPIRATION_DAYS = 30;
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly accessSecret: string;
-  private readonly refreshSecret: string;
-  private readonly accessExpiresInSeconds = 15 * 60; // 15 minutes
-  private readonly refreshExpiresInDays = 30; // 30 days
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly oauthAdapter: OAuthAdapter,
-  ) {
-    this.accessSecret = this.configService.get<string>('JWT_ACCESS_SECRET') || 'dev-jwt-access-secret-min-32-chars-long';
-    this.refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || 'dev-jwt-refresh-secret-min-32-chars-long';
+  ) {}
+
+  private getJwtAccessSecret(): string {
+    return (
+      this.configService.get<string>('JWT_ACCESS_SECRET') ||
+      'dev-jwt-access-secret-change-in-prod-min-32-chars-length'
+    );
   }
 
-  async register(dto: RegisterDto): Promise<AuthSessionResponse> {
-    const normalizedEmail = dto.email.trim().toLowerCase();
+  private generateSecureTokenString(): string {
+    return `o2_rt_${crypto.randomBytes(32).toString('hex')}`;
+  }
 
-    // Check if an email identity already exists
+  async register(dto: RegisterDto, deviceInfo?: string): Promise<AuthSessionResponse> {
+    const normalized = normalizeEmail(dto.email);
+
     const existingIdentity = await this.prisma.authIdentity.findUnique({
       where: {
         provider_providerId: {
           provider: 'EMAIL',
-          providerId: normalizedEmail,
+          providerId: normalized,
         },
       },
     });
 
     if (existingIdentity) {
-      this.logger.warn(`Registration rejected: duplicate email attempt`);
       throw new ConflictException('البريد الإلكتروني مسجل بالفعل');
     }
 
     const passwordHash = await PasswordUtil.hash(dto.password);
 
-    // Create User, AuthIdentity, and PlayerProfile in a single transaction
-    const result = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
         data: {
           role: 'PLAYER',
           moderationStatus: 'ACTIVE',
@@ -66,76 +74,73 @@ export class AuthService {
 
       await tx.authIdentity.create({
         data: {
-          userId: user.id,
+          userId: newUser.id,
           provider: 'EMAIL',
-          providerId: normalizedEmail,
+          providerId: normalized,
           passwordHash,
         },
       });
 
-      const profile = await tx.playerProfile.create({
+      await tx.playerProfile.create({
         data: {
-          userId: user.id,
+          userId: newUser.id,
           language: 'ar',
           isOnboarded: false,
         },
       });
 
-      return { user, profile };
+      return newUser;
     });
 
-    this.logger.log(`New user registered successfully: [${result.user.id}]`);
-    return this.createSessionAndTokens(result.user.id, dto.deviceInfo);
+    return this.createSessionAndTokens(user.id, deviceInfo);
   }
 
-  async login(dto: LoginDto): Promise<AuthSessionResponse> {
-    const normalizedEmail = dto.email.trim().toLowerCase();
+  async login(dto: LoginDto, deviceInfo?: string): Promise<AuthSessionResponse> {
+    const normalized = normalizeEmail(dto.email);
 
     const identity = await this.prisma.authIdentity.findUnique({
       where: {
         provider_providerId: {
           provider: 'EMAIL',
-          providerId: normalizedEmail,
+          providerId: normalized,
         },
       },
-      include: { user: { include: { profile: true } } },
+      include: {
+        user: true,
+      },
     });
 
     if (!identity || !identity.passwordHash) {
-      this.logger.warn(`Login failed: email not found or missing password hash`);
-      throw new UnauthorizedException('بيانات الدخول غير صحيحة');
+      throw new UnauthorizedException('بيانات الاعتماد غير صحيحة');
     }
 
-    const isValidPassword = await PasswordUtil.verify(dto.password, identity.passwordHash);
-    if (!isValidPassword) {
-      this.logger.warn(`Login failed: invalid password for user [${identity.userId}]`);
-      throw new UnauthorizedException('بيانات الدخول غير صحيحة');
+    const isPasswordValid = await PasswordUtil.verify(dto.password, identity.passwordHash);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('بيانات الاعتماد غير صحيحة');
     }
 
     if (identity.user.moderationStatus === 'BANNED' || identity.user.moderationStatus === 'SUSPENDED') {
-      throw new UnauthorizedException('تم حظر هذا الحساب من قبل إدارة O2 Universe');
+      throw new ForbiddenException('الحساب موقوف أو محظور');
     }
 
-    // Update lastActiveAt
-    await this.prisma.user.update({
-      where: { id: identity.userId },
-      data: { lastActiveAt: new Date() },
-    });
-
-    this.logger.log(`User logged in: [${identity.userId}]`);
-    return this.createSessionAndTokens(identity.userId, dto.deviceInfo);
+    return this.createSessionAndTokens(identity.userId, deviceInfo);
   }
 
-  async googleAuth(dto: GoogleAuthDto): Promise<AuthSessionResponse> {
-    const payload = await this.oauthAdapter.verifyGoogleToken(dto.idToken);
-    return this.handleOAuthIdentity('GOOGLE', payload.providerId, payload.email, payload.displayName, dto.deviceInfo);
+  async loginWithGoogle(idToken: string, deviceInfo?: string): Promise<AuthSessionResponse> {
+    const payload = await this.oauthAdapter.verifyGoogleToken(idToken);
+    return this.handleOAuthIdentity('GOOGLE', payload.providerId, payload.email, payload.displayName, deviceInfo);
   }
 
-  async appleAuth(dto: AppleAuthDto): Promise<AuthSessionResponse> {
-    const payload = await this.oauthAdapter.verifyAppleToken(dto.identityToken, dto.rawNonce);
-    return this.handleOAuthIdentity('APPLE', payload.providerId, payload.email, payload.displayName, dto.deviceInfo);
+  async loginWithApple(identityToken: string, rawNonce?: string, deviceInfo?: string): Promise<AuthSessionResponse> {
+    const payload = await this.oauthAdapter.verifyAppleToken(identityToken, rawNonce);
+    return this.handleOAuthIdentity('APPLE', payload.providerId, payload.email, payload.displayName, deviceInfo);
   }
 
+  /**
+   * OAuth Account-Linking Policy:
+   * Multi-provider identities are strictly mapped by (provider, providerId).
+   * We NEVER automatically merge OAuth accounts into existing password accounts based purely on email.
+   */
   private async handleOAuthIdentity(
     provider: 'GOOGLE' | 'APPLE',
     providerId: string,
@@ -145,167 +150,101 @@ export class AuthService {
   ): Promise<AuthSessionResponse> {
     const identity = await this.prisma.authIdentity.findUnique({
       where: {
-        provider_providerId: {
+        provider_providerId: { provider, providerId },
+      },
+      include: { user: true },
+    });
+
+    if (identity) {
+      if (identity.user.moderationStatus === 'BANNED' || identity.user.moderationStatus === 'SUSPENDED') {
+        throw new ForbiddenException('الحساب موقوف أو محظور');
+      }
+      return this.createSessionAndTokens(identity.userId, deviceInfo);
+    }
+
+    // First time OAuth user creation
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          role: 'PLAYER',
+          moderationStatus: 'ACTIVE',
+        },
+      });
+
+      await tx.authIdentity.create({
+        data: {
+          userId: newUser.id,
           provider,
           providerId,
         },
-      },
-      include: { user: { include: { profile: true } } },
-    });
-
-    if (!identity) {
-      // Transactionally create User and OAuth Identity
-      const result = await this.prisma.$transaction(async (tx) => {
-        const user = await tx.user.create({
-          data: {
-            role: 'PLAYER',
-            moderationStatus: 'ACTIVE',
-          },
-        });
-
-        await tx.authIdentity.create({
-          data: {
-            userId: user.id,
-            provider,
-            providerId,
-          },
-        });
-
-        await tx.playerProfile.create({
-          data: {
-            userId: user.id,
-            displayName: displayName || null,
-            language: 'ar',
-            isOnboarded: false,
-          },
-        });
-
-        return user;
       });
 
-      this.logger.log(`Created new account via ${provider} OAuth: [${result.id}]`);
-      return this.createSessionAndTokens(result.id, deviceInfo);
-    }
-
-    if (identity.user.moderationStatus === 'BANNED' || identity.user.moderationStatus === 'SUSPENDED') {
-      throw new UnauthorizedException('تم حظر هذا الحساب من قبل إدارة O2 Universe');
-    }
-
-    return this.createSessionAndTokens(identity.userId, deviceInfo);
-  }
-
-  async refreshToken(dto: RefreshTokenDto): Promise<AuthTokens> {
-    let payload: any;
-    try {
-      payload = this.jwtService.verify(dto.refreshToken, { secret: this.refreshSecret });
-    } catch {
-      throw new UnauthorizedException('رمز التحديث غير صالح أو منتهي الصلاحية');
-    }
-
-    const { sub: userId, sessionId, tokenFamily } = payload;
-    if (!userId || !sessionId || !tokenFamily) {
-      throw new UnauthorizedException('بنية رمز التحديث غير صالحة');
-    }
-
-    const session = await this.prisma.userSession.findUnique({
-      where: { id: sessionId },
-    });
-
-    if (!session) {
-      throw new UnauthorizedException('الجلسة غير موجودة');
-    }
-
-    const incomingHash = PasswordUtil.hashRefreshToken(dto.refreshToken);
-
-    // REPLAY ATTACK DETECTION:
-    // If session is revoked OR hash does not match active token, revoke entire token family!
-    if (session.revokedAt || session.refreshTokenHash !== incomingHash) {
-      this.logger.error(`Replay attack detected on session [${sessionId}] in family [${session.familyId}]. Revoking family.`);
-      await this.prisma.userSession.updateMany({
-        where: { familyId: session.familyId },
-        data: { revokedAt: new Date() },
+      await tx.playerProfile.create({
+        data: {
+          userId: newUser.id,
+          displayName: displayName || null,
+          language: 'ar',
+          isOnboarded: false,
+        },
       });
-      throw new UnauthorizedException('تم اكتشاف محاولة إعادة استخدام رمز غير صالح، تم إنهاء الجلسة للأمان');
-    }
 
-    // Rotate refresh token
-    const newRefreshToken = this.generateRawRefreshToken(userId, sessionId, session.familyId);
-    const newRefreshHash = PasswordUtil.hashRefreshToken(newRefreshToken);
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.refreshExpiresInDays * 24 * 60 * 60 * 1000);
-
-    await this.prisma.userSession.update({
-      where: { id: sessionId },
-      data: {
-        refreshTokenHash: newRefreshHash,
-        lastUsedAt: now,
-        expiresAt,
-        deviceInfo: dto.deviceInfo || session.deviceInfo,
-      },
+      return newUser;
     });
 
-    const accessToken = this.generateRawAccessToken(userId, sessionId);
-
-    return {
-      accessToken,
-      refreshToken: newRefreshToken,
-      expiresIn: this.accessExpiresInSeconds,
-    };
+    return this.createSessionAndTokens(user.id, deviceInfo);
   }
 
-  async logout(sessionId: string): Promise<{ success: boolean }> {
-    await this.prisma.userSession.updateMany({
-      where: { id: sessionId },
-      data: { revokedAt: new Date() },
-    });
-    this.logger.log(`Session [${sessionId}] logged out.`);
-    return { success: true };
-  }
-
-  async logoutAll(userId: string): Promise<{ success: boolean }> {
-    await this.prisma.userSession.updateMany({
-      where: { userId },
-      data: { revokedAt: new Date() },
-    });
-    this.logger.log(`All sessions revoked for user [${userId}].`);
-    return { success: true };
-  }
-
+  /**
+   * Atomic Token Generation: Creates UserSession and first RefreshTokenRecord in a transaction.
+   */
   private async createSessionAndTokens(userId: string, deviceInfo?: string): Promise<AuthSessionResponse> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { profile: true },
-    });
-
-    if (!user) {
-      throw new NotFoundException('المستخدم غير موجود');
-    }
-
-    const sessionId = crypto.randomUUID();
     const familyId = crypto.randomUUID();
-    const refreshToken = this.generateRawRefreshToken(userId, sessionId, familyId);
-    const refreshTokenHash = PasswordUtil.hashRefreshToken(refreshToken);
+    const rawRefreshToken = this.generateSecureTokenString();
+    const tokenHash = PasswordUtil.hashRefreshToken(rawRefreshToken);
 
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + this.refreshExpiresInDays * 24 * 60 * 60 * 1000);
+    const sessionExpiresAt = new Date();
+    sessionExpiresAt.setDate(sessionExpiresAt.getDate() + REFRESH_TOKEN_EXPIRATION_DAYS);
 
-    await this.prisma.userSession.create({
-      data: {
-        id: sessionId,
-        userId,
-        familyId,
-        refreshTokenHash,
-        deviceInfo: deviceInfo || null,
-        expiresAt,
-        lastUsedAt: now,
-      },
+    const { session } = await this.prisma.$transaction(async (tx) => {
+      const newSession = await tx.userSession.create({
+        data: {
+          userId,
+          familyId,
+          deviceInfo: deviceInfo || null,
+          expiresAt: sessionExpiresAt,
+        },
+      });
+
+      await tx.refreshTokenRecord.create({
+        data: {
+          sessionId: newSession.id,
+          familyId,
+          tokenHash,
+          expiresAt: sessionExpiresAt,
+        },
+      });
+
+      return { session: newSession };
     });
 
-    const accessToken = this.generateRawAccessToken(userId, sessionId);
+    const accessToken = this.generateAccessToken(userId, session.id, familyId);
+
+    const fullProfile = await this.prisma.playerProfile.findUnique({
+      where: { userId },
+      include: { selectedCharacter: true },
+    });
+
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
 
     return {
-      sessionId,
+      sessionId: session.id,
+      tokens: {
+        accessToken,
+        refreshToken: rawRefreshToken,
+        expiresIn: 900, // 15 minutes
+      },
       user: {
         id: user.id,
         role: user.role,
@@ -313,50 +252,179 @@ export class AuthService {
         createdAt: user.createdAt.toISOString(),
         lastActiveAt: user.lastActiveAt.toISOString(),
       },
-      profile: user.profile
+      profile: fullProfile
         ? {
-            userId: user.profile.userId,
-            username: user.profile.username,
-            normalizedUsername: user.profile.normalizedUsername,
-            displayName: user.profile.displayName,
-            language: user.profile.language,
-            selectedCharacterId: user.profile.selectedCharacterId,
-            isOnboarded: user.profile.isOnboarded,
-            createdAt: user.profile.createdAt.toISOString(),
-            updatedAt: user.profile.updatedAt.toISOString(),
+            userId: fullProfile.userId,
+            username: fullProfile.username,
+            normalizedUsername: fullProfile.normalizedUsername,
+            displayName: fullProfile.displayName,
+            language: fullProfile.language,
+            selectedCharacterId: fullProfile.selectedCharacterId,
+            isOnboarded: fullProfile.isOnboarded,
+            createdAt: fullProfile.createdAt.toISOString(),
+            updatedAt: fullProfile.updatedAt.toISOString(),
           }
         : null,
-      tokens: {
-        accessToken,
-        refreshToken,
-        expiresIn: this.accessExpiresInSeconds,
-      },
     };
   }
 
-  private generateRawAccessToken(userId: string, sessionId: string): string {
-    return this.jwtService.sign(
-      {
-        sub: userId,
-        sessionId,
+  /**
+   * Refresh Token Rotation with Atomic Consumption & Family Replay Attack Revocation
+   */
+  async refreshTokens(dto: RefreshTokenDto, ipAddress?: string): Promise<AuthTokens> {
+    if (!dto.refreshToken || typeof dto.refreshToken !== 'string') {
+      throw new BadRequestException('رمز التجديد مطلوب');
+    }
+
+    const tokenHash = PasswordUtil.hashRefreshToken(dto.refreshToken);
+
+    const tokenRecord = await this.prisma.refreshTokenRecord.findUnique({
+      where: { tokenHash },
+      include: {
+        session: {
+          include: { user: true },
+        },
       },
-      {
-        secret: this.accessSecret,
-        expiresIn: this.accessExpiresInSeconds,
-      },
+    });
+
+    if (!tokenRecord) {
+      this.logger.warn(`Refresh attempt with non-existent token hash [${tokenHash.slice(0, 8)}]`);
+      throw new UnauthorizedException('رمز التجديد غير صالح');
+    }
+
+    // REPLAY ATTACK DETECTION:
+    // If the token was already consumed or revoked, someone is replaying a stolen/expired token.
+    // Immediately revoke the ENTIRE token family/session family!
+    if (tokenRecord.consumedAt !== null || tokenRecord.revokedAt !== null) {
+      this.logger.error(
+        `[SECURITY_ALERT: REFRESH_TOKEN_REPLAY] Replay detected for familyId: [${tokenRecord.familyId}], sessionId: [${tokenRecord.sessionId}]. Revoking entire session family.`,
+      );
+
+      const now = new Date();
+      await this.prisma.$transaction([
+        this.prisma.refreshTokenRecord.updateMany({
+          where: { familyId: tokenRecord.familyId },
+          data: { revokedAt: now },
+        }),
+        this.prisma.userSession.updateMany({
+          where: { familyId: tokenRecord.familyId },
+          data: { revokedAt: now },
+        }),
+      ]);
+
+      throw new UnauthorizedException('تم اكتشاف محاولة إعادة استخدام رمز أمان قديم. تم إبطال الجلسة لحمايتك.');
+    }
+
+    // Check expiration
+    if (new Date() > tokenRecord.expiresAt) {
+      throw new UnauthorizedException('رمز التجديد منتهي الصلاحية');
+    }
+
+    // Check session validity
+    if (tokenRecord.session.revokedAt !== null) {
+      throw new UnauthorizedException('الجلسة ملغاة');
+    }
+
+    // Check account status
+    if (
+      tokenRecord.session.user.moderationStatus === 'BANNED' ||
+      tokenRecord.session.user.moderationStatus === 'SUSPENDED'
+    ) {
+      throw new ForbiddenException('الحساب موقوف أو محظور');
+    }
+
+    // ATOMIC ROTATION
+    const newRawRefreshToken = this.generateSecureTokenString();
+    const newTokenHash = PasswordUtil.hashRefreshToken(newRawRefreshToken);
+    const now = new Date();
+
+    const newExpiresAt = new Date();
+    newExpiresAt.setDate(newExpiresAt.getDate() + REFRESH_TOKEN_EXPIRATION_DAYS);
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Create new child RefreshTokenRecord
+      const newChildRecord = await tx.refreshTokenRecord.create({
+        data: {
+          sessionId: tokenRecord.sessionId,
+          familyId: tokenRecord.familyId,
+          tokenHash: newTokenHash,
+          expiresAt: newExpiresAt,
+        },
+      });
+
+      // 2. Mark current record as consumed atomically
+      await tx.refreshTokenRecord.update({
+        where: { id: tokenRecord.id },
+        data: {
+          consumedAt: now,
+          replacedByTokenId: newChildRecord.id,
+        },
+      });
+
+      // 3. Update session lastUsedAt
+      await tx.userSession.update({
+        where: { id: tokenRecord.sessionId },
+        data: {
+          lastUsedAt: now,
+          ipAddress: ipAddress || undefined,
+        },
+      });
+    });
+
+    const newAccessToken = this.generateAccessToken(
+      tokenRecord.session.userId,
+      tokenRecord.sessionId,
+      tokenRecord.familyId,
     );
+
+    return {
+      accessToken: newAccessToken,
+      refreshToken: newRawRefreshToken,
+      expiresIn: 900,
+    };
   }
 
-  private generateRawRefreshToken(userId: string, sessionId: string, tokenFamily: string): string {
+  async logout(sessionId: string): Promise<void> {
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.userSession.updateMany({
+        where: { id: sessionId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.refreshTokenRecord.updateMany({
+        where: { sessionId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+    ]);
+  }
+
+  async logoutAll(userId: string): Promise<void> {
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.userSession.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+      this.prisma.refreshTokenRecord.updateMany({
+        where: { session: { userId }, revokedAt: null },
+        data: { revokedAt: now },
+      }),
+    ]);
+  }
+
+  private generateAccessToken(userId: string, sessionId: string, familyId: string): string {
     return this.jwtService.sign(
       {
         sub: userId,
         sessionId,
-        tokenFamily,
+        familyId,
       },
       {
-        secret: this.refreshSecret,
-        expiresIn: `${this.refreshExpiresInDays}d`,
+        secret: this.getJwtAccessSecret(),
+        expiresIn: ACCESS_TOKEN_EXPIRATION,
+        algorithm: 'HS256',
+        issuer: 'o2-universe-auth-service',
+        audience: 'o2-universe-clients',
       },
     );
   }

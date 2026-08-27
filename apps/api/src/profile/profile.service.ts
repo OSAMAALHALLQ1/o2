@@ -157,60 +157,64 @@ export class ProfileService {
   }
 
   async selectPermanentStarterCompanion(userId: string, dto: SelectCompanionDto) {
-    const character = await this.prisma.character.findUnique({
-      where: { id: dto.characterId },
+    return this.prisma.$transaction(async (tx) => {
+      const character = await tx.character.findUnique({
+        where: { id: dto.characterId },
+      });
+
+      if (!character || !character.isActive || !character.isStarter) {
+        throw new BadRequestException('الرفيق المختار غير صالح أو غير متاح كرفيق بداية');
+      }
+
+      const profile = await tx.playerProfile.findUnique({
+        where: { userId },
+      });
+
+      if (!profile) {
+        throw new NotFoundException('الملف الشخصي غير موجود');
+      }
+
+      // PERMANENT SELECTION ENFORCEMENT:
+      // Once a starter companion is chosen, the player cannot switch it without explicit future game mechanics
+      if (profile.selectedCharacterId) {
+        this.logger.warn(
+          `User [${userId}] attempted to re-select starter companion while already owning [${profile.selectedCharacterId}]`,
+        );
+        throw new ConflictException('تم اختيار رفيق البداية الدائم مسبقاً ولا يمكن تغييره');
+      }
+
+      const isOnboarded = Boolean(profile.username);
+
+      const updatedProfile = await tx.playerProfile.update({
+        where: { userId },
+        data: {
+          selectedCharacterId: character.id,
+          isOnboarded,
+        },
+      });
+
+      this.logger.log(`User [${userId}] permanently selected starter companion [${character.slug}]`);
+
+      return {
+        success: true,
+        selectedCharacter: {
+          id: character.id,
+          slug: character.slug,
+          nameAr: character.nameAr,
+          nameEn: character.nameEn,
+          descriptionAr: character.descriptionAr,
+          archetype: character.archetype,
+          placeholderAsset: character.placeholderAsset,
+          isStarter: character.isStarter,
+          sortOrder: character.sortOrder,
+        },
+        profile: {
+          userId: updatedProfile.userId,
+          username: updatedProfile.username,
+          selectedCharacterId: updatedProfile.selectedCharacterId,
+          isOnboarded: updatedProfile.isOnboarded,
+        },
+      };
     });
-
-    if (!character || !character.isActive || !character.isStarter) {
-      throw new BadRequestException('الرفيق المختار غير صالح أو غير متاح كرفيق بداية');
-    }
-
-    const profile = await this.prisma.playerProfile.findUnique({
-      where: { userId },
-    });
-
-    if (!profile) {
-      throw new NotFoundException('الملف الشخصي غير موجود');
-    }
-
-    // PERMANENT SELECTION ENFORCEMENT:
-    // Once a starter companion is chosen, the player cannot switch it without explicit future game mechanics
-    if (profile.selectedCharacterId) {
-      this.logger.warn(`User [${userId}] attempted to re-select starter companion while already owning [${profile.selectedCharacterId}]`);
-      throw new ConflictException('تم اختيار رفيق البداية الدائم مسبقاً ولا يمكن تغييره');
-    }
-
-    const isOnboarded = Boolean(profile.username);
-
-    const updatedProfile = await this.prisma.playerProfile.update({
-      where: { userId },
-      data: {
-        selectedCharacterId: character.id,
-        isOnboarded,
-      },
-    });
-
-    this.logger.log(`User [${userId}] permanently selected starter companion [${character.slug}]`);
-
-    return {
-      success: true,
-      selectedCharacter: {
-        id: character.id,
-        slug: character.slug,
-        nameAr: character.nameAr,
-        nameEn: character.nameEn,
-        descriptionAr: character.descriptionAr,
-        archetype: character.archetype,
-        placeholderAsset: character.placeholderAsset,
-        isStarter: character.isStarter,
-        sortOrder: character.sortOrder,
-      },
-      profile: {
-        userId: updatedProfile.userId,
-        username: updatedProfile.username,
-        selectedCharacterId: updatedProfile.selectedCharacterId,
-        isOnboarded: updatedProfile.isOnboarded,
-      },
-    };
   }
 }
