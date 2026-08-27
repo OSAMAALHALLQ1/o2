@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, StyleSheet, ViewStyle, StyleProp, TouchableOpacity, TouchableOpacityProps } from 'react-native';
+import { View, ViewStyle, StyleProp, TouchableOpacity, TouchableOpacityProps } from 'react-native';
 import { colors, radius, spacing, elevation } from '../tokens';
 
 export type CardVariant = 'default' | 'elevated' | 'highlight' | 'outlined' | 'goldBorder';

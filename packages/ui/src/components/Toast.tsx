@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { colors, radius, spacing, typography, elevation } from '../tokens';
 import { useDirection, getTextAlign, getFlexDirection } from '../rtl';
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ViewStyle, StyleSheet, ViewProps } from 'react-native';
+import { View, ViewStyle, ViewProps } from 'react-native';
 import { colors } from '../tokens';
 
 export type SurfaceLevel = 'background' | 'surface' | 'elevated' | 'highlight';

@@ -4,18 +4,25 @@ import {
   GameDefinitionDto,
   RestaurantBranchDto,
   CosmeticItemSummaryDto,
-  VirtualFoodSummaryDto,
   PartySummaryDto,
   UserSummaryDto,
 } from '@o2/types';
 
 export const mockUser: UserSummaryDto = {
   id: 'usr_mock_001',
+  role: 'PLAYER',
+  moderationStatus: 'ACTIVE',
+  createdAt: '2026-01-15T12:00:00Z',
+  lastActiveAt: new Date().toISOString(),
+};
+
+export const mockProfile = {
+  userId: 'usr_mock_001',
   username: 'anas_o2',
   displayName: 'أنس — سفير O2',
-  role: 'PLAYER',
   language: 'ar',
-  createdAt: '2026-01-15T12:00:00Z',
+  selectedCharacterId: 'char_panda_01',
+  isOnboarded: true,
 };
 
 export const mockBalances: WalletBalancesDto = {

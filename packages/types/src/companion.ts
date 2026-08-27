@@ -17,6 +17,29 @@ export interface CompanionRenderProps {
   interactive?: boolean;
 }
 
+export interface StarterCompanionDto {
+  id: string;
+  slug: string;
+  nameAr: string;
+  nameEn: string;
+  descriptionAr: string;
+  archetype: string;
+  placeholderAsset: string;
+  isStarter: boolean;
+  sortOrder: number;
+}
+
+export interface CompanionSelectResponse {
+  success: boolean;
+  selectedCharacter: StarterCompanionDto;
+  profile: {
+    userId: string;
+    username: string | null;
+    selectedCharacterId: string;
+    isOnboarded: boolean;
+  };
+}
+
 export interface CompanionCareStateDto {
   characterId: string;
   characterSlug: string;

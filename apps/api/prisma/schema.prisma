@@ -1,0 +1,118 @@
+// O2 Universe — Prisma Schema (Phase 2 Identity & Companion Onboarding Domain)
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum AuthProvider {
+  EMAIL
+  GOOGLE
+  APPLE
+}
+
+enum ModerationStatus {
+  ACTIVE
+  MUTED
+  SUSPENDED
+  BANNED
+}
+
+enum UserRole {
+  PLAYER
+  MODERATOR
+  RESTAURANT_ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id                String            @id @default(uuid())
+  role              UserRole          @default(PLAYER)
+  moderationStatus  ModerationStatus  @default(ACTIVE)
+  lastActiveAt      DateTime          @default(now())
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  identities        AuthIdentity[]
+  sessions          UserSession[]
+  profile           PlayerProfile?
+
+  @@map("users")
+}
+
+model AuthIdentity {
+  id                String        @id @default(uuid())
+  userId            String
+  provider          AuthProvider
+  providerId        String        // Normalized email or OAuth subject ID
+  passwordHash      String?       // Argon2id hash (EMAIL provider only)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@index([userId])
+  @@map("auth_identities")
+}
+
+model UserSession {
+  id                String        @id @default(uuid())
+  userId            String
+  refreshTokenHash  String        // Secure SHA-256 hash of the rotating refresh token
+  familyId          String        // Refresh token family UUID for rotation and replay revocation
+  deviceInfo        String?       // OS, Client Model, App Version
+  ipAddress         String?
+  userAgent         String?
+  expiresAt         DateTime
+  lastUsedAt        DateTime      @default(now())
+  revokedAt         DateTime?
+  createdAt         DateTime      @default(now())
+
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("user_sessions")
+}
+
+model PlayerProfile {
+  id                  String      @id @default(uuid())
+  userId              String      @unique
+  username            String?
+  normalizedUsername  String?     @unique // Lowercase trimmed handle for strict case-insensitive uniqueness
+  displayName         String?
+  language            String      @default("ar")
+  selectedCharacterId String?
+  isOnboarded         Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedCharacter   Character?  @relation(fields: [selectedCharacterId], references: [id])
+
+  @@index([selectedCharacterId])
+  @@map("player_profiles")
+}
+
+model Character {
+  id                String          @id @default(uuid())
+  slug              String          @unique
+  nameAr            String
+  nameEn            String
+  descriptionAr     String
+  archetype         String
+  placeholderAsset  String
+  isStarter         Boolean         @default(true)
+  isActive          Boolean         @default(true)
+  sortOrder         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  profiles          PlayerProfile[]
+
+  @@map("characters")
+}

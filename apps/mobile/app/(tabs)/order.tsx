@@ -8,7 +8,6 @@ import {
   colors,
   spacing,
   typography,
-  radius,
   useToast,
 } from '@o2/ui';
 import { mockBranches } from '../../src/data/mockData';

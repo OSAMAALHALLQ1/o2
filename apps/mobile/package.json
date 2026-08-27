@@ -11,7 +11,7 @@
     "web": "expo start --web",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "eslint app src --max-warnings 10"
   },
   "dependencies": {
     "@o2/types": "workspace:*",
@@ -20,6 +20,7 @@
     "expo-constants": "~57.0.15",
     "expo-linking": "~57.0.8",
     "expo-router": "~57.0.17",
+    "expo-secure-store": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",

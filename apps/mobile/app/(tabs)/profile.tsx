@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Alert } from 'react-native';
 import {
   ScreenContainer,
   Card,
@@ -9,13 +9,14 @@ import {
   colors,
   spacing,
   typography,
-  radius,
   useToast,
 } from '@o2/ui';
-import { mockUser, mockCompanion } from '../../src/data/mockData';
+import { useAuth } from '../../src/context/AuthContext';
+import { mockProfile, mockCompanion } from '../../src/data/mockData';
 
 export default function ProfileScreen() {
   const { showToast } = useToast();
+  const { profile, logout, isLoading } = useAuth();
 
   const handleAction = (title: string) => {
     showToast({
@@ -25,20 +26,40 @@ export default function ProfileScreen() {
     });
   };
 
+  const handleLogout = () => {
+    Alert.alert(
+      'تسجيل الخروج',
+      'هل تود بالتأكيد تسجيل الخروج من هذا الجهاز؟',
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: 'خروج',
+          style: 'destructive',
+          onPress: async () => {
+            await logout();
+          },
+        },
+      ],
+    );
+  };
+
+  const displayName = profile?.displayName || profile?.username || mockProfile.displayName;
+  const usernameHandle = profile?.username || mockProfile.username;
+
   return (
     <ScreenContainer scrollable style={styles.container}>
       {/* User Header Profile Card */}
       <Card variant="elevated" style={styles.profileHero}>
         <AvatarFrame
           size={76}
-          avatarText={mockUser.displayName}
+          avatarText={displayName}
           rarity="LEGENDARY"
           isOnline
         />
         <View style={styles.heroText}>
-          <Text style={styles.heroDisplayName}>{mockUser.displayName}</Text>
-          <Text style={styles.heroUsername}>@{mockUser.username}</Text>
-          <Badge label="عضو مؤسس 🌟" variant="gold" size="sm" />
+          <Text style={styles.heroDisplayName}>{displayName}</Text>
+          <Text style={styles.heroUsername}>@{usernameHandle}</Text>
+          <Badge label="لاعب معتمد 🌟" variant="gold" size="sm" />
         </View>
       </Card>
 
@@ -67,41 +88,19 @@ export default function ProfileScreen() {
         <Card variant="highlight" style={styles.companionCard}>
           <Text style={styles.companionEmoji}>🐼</Text>
           <View style={styles.companionInfo}>
-            <Text style={styles.companionName}>{mockCompanion.customName}</Text>
+            <Text style={styles.companionName}>
+              {profile?.selectedCharacterId ? 'رفيقك الدائم المعتمد' : mockCompanion.customName}
+            </Text>
             <Text style={styles.companionDesc}>
-              باندا O2 المحبوب — الحالة: سعيد جداً ومكتمل الرعاية
+              رفيق O2 الدائم — جاهز لخوض الجولات والألعاب الجماعية
             </Text>
           </View>
         </Card>
       </View>
 
-      {/* Achievements List */}
+      {/* Navigation Entries & Logout */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>🏆 الإنجازات والأوسمة</Text>
-        <Card style={styles.achievementsCard}>
-          <View style={styles.achievementRow}>
-            <Text style={styles.achieveIcon}>🥇</Text>
-            <View style={styles.achieveDetails}>
-              <Text style={styles.achieveTitle}>أول طلب موثق من O2</Text>
-              <Text style={styles.achieveDesc}>امسح أول فاتورة من مطعم O2</Text>
-            </View>
-            <Badge label="مكتمل ✓" variant="success" size="sm" />
-          </View>
-
-          <View style={styles.achievementRow}>
-            <Text style={styles.achieveIcon}>🕵️‍♂️</Text>
-            <View style={styles.achieveDetails}>
-              <Text style={styles.achieveTitle}>محقق مافيا محترف</Text>
-              <Text style={styles.achieveDesc}>اكشف المافيا في 3 مباريات متتالية</Text>
-            </View>
-            <Badge label="1/3" variant="secondary" size="sm" />
-          </View>
-        </Card>
-      </View>
-
-      {/* Navigation Entries */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>⚙️ الإعدادات والأصدقاء</Text>
+        <Text style={styles.sectionTitle}>⚙️ الإعدادات والحساب</Text>
         <View style={styles.navEntriesList}>
           <Card
             style={styles.entryCard}
@@ -114,21 +113,21 @@ export default function ProfileScreen() {
 
           <Card
             style={styles.entryCard}
-            onPress={() => handleAction('إعدادات الحساب')}
-          >
-            <Text style={styles.entryIcon}>⚙️</Text>
-            <Text style={styles.entryTitle}>إعدادات الحساب واللغة والصوت</Text>
-            <Text style={styles.entryArrow}>➜</Text>
-          </Card>
-
-          <Card
-            style={styles.entryCard}
-            onPress={() => handleAction('شروط الخدمة')}
+            onPress={() => handleAction('شروط الخدمة والخصوصية')}
           >
             <Text style={styles.entryIcon}>📜</Text>
             <Text style={styles.entryTitle}>شروط الخدمة والخصوصية في O2</Text>
             <Text style={styles.entryArrow}>➜</Text>
           </Card>
+
+          <Button
+            label="تسجيل الخروج من الحساب"
+            variant="outline"
+            size="md"
+            onPress={handleLogout}
+            isLoading={isLoading}
+            style={styles.logoutBtn}
+          />
         </View>
       </View>
     </ScreenContainer>
@@ -213,35 +212,6 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.xs,
     color: colors.text.secondary,
   },
-  achievementsCard: {
-    gap: spacing.md,
-  },
-  achievementRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderColor: colors.surfaces.border,
-  },
-  achieveIcon: {
-    fontSize: 24,
-  },
-  achieveDetails: {
-    flex: 1,
-    gap: 2,
-  },
-  achieveTitle: {
-    fontFamily: typography.fontFamily.heading,
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.text.primary,
-  },
-  achieveDesc: {
-    fontFamily: typography.fontFamily.body,
-    fontSize: typography.fontSize.xs,
-    color: colors.text.secondary,
-  },
   navEntriesList: {
     gap: spacing.sm,
   },
@@ -264,5 +234,9 @@ const styles = StyleSheet.create({
     fontFamily: typography.fontFamily.heading,
     fontSize: typography.fontSize.sm,
     color: colors.text.secondary,
+  },
+  logoutBtn: {
+    marginTop: spacing.sm,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
   },
 });

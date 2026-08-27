@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
+import { View, Text, StyleSheet, ViewStyle } from 'react-native';
 import { colors, radius, spacing, typography, elevation } from '../tokens';
 import { ItemRarity } from '@o2/types';
 import { Badge } from './Badge';

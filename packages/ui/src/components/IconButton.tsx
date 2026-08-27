@@ -5,7 +5,7 @@ import {
   ViewStyle,
   TouchableOpacityProps,
 } from 'react-native';
-import { colors, radius, spacing } from '../tokens';
+import { colors, radius } from '../tokens';
 
 export type IconButtonVariant = 'primary' | 'secondary' | 'surface' | 'ghost' | 'gold';
 export type IconButtonSize = 'sm' | 'md' | 'lg';

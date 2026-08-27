@@ -28,35 +28,35 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'الرئيسية',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20 }}>🏠</Text>,
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🏠</Text>,
         }}
       />
       <Tabs.Screen
         name="play"
         options={{
           title: 'الألعاب',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20 }}>🎮</Text>,
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🎮</Text>,
         }}
       />
       <Tabs.Screen
         name="order"
         options={{
           title: 'طلب O2',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20 }}>🍔</Text>,
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🍔</Text>,
         }}
       />
       <Tabs.Screen
         name="collection"
         options={{
           title: 'المقتنيات',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20 }}>🎒</Text>,
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🎒</Text>,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'الملف',
-          tabBarIcon: ({ color }) => <Text style={{ fontSize: 20 }}>👤</Text>,
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>👤</Text>,
         }}
       />
     </Tabs>

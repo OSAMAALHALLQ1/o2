@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { validateEnvironment } from './common/config.schema';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { ProfileModule } from './profile/profile.module';
 import { HealthModule } from './modules/health/health.module';
-import { AuthModule } from './modules/auth/auth.module';
-import { CompanionModule } from './modules/companion/companion.module';
 import { EconomyModule } from './modules/economy/economy.module';
 import { SocialModule } from './modules/social/social.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -19,10 +20,12 @@ import { NotificationModule } from './modules/notification/notification.module';
       isGlobal: true,
       validate: validateEnvironment,
     }),
+    PrismaModule,
     HealthModule,
-    // Architectural Module Boundaries
+    // Phase 2 Identity, Auth & Onboarding Modules
     AuthModule,
-    CompanionModule,
+    ProfileModule,
+    // Future Phase Domain Shells
     EconomyModule,
     SocialModule,
     RealtimeModule,
