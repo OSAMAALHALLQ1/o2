@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "O2 Universe",
+    "slug": "o2-universe",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "o2universe",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0A0E17"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.o2.universe"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0E17"
+      },
+      "package": "com.o2.universe"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "supportsRTL": true,
+      "eas": {
+        "projectId": "o2-universe-placeholder"
+      }
+    }
+  }
+}
