@@ -1,4 +1,4 @@
-// O2 Universe — Prisma Schema (Phase 2 & Phase 3 Living Companion Domain)
+// O2 Universe — Prisma Schema (Phase 2, Phase 3 & Phase 4 Economy, Inventory, Shop & Cosmetics)
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -28,6 +28,65 @@ enum UserRole {
   SUPER_ADMIN
 }
 
+// Phase 4 Enums
+enum CurrencyKind {
+  COIN
+  GEM
+  EVENT_TOKEN
+}
+
+enum CurrencyScopeType {
+  EVENT
+  SEASON
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum CurrencyLedgerSource {
+  WELCOME_BONUS
+  SHOP_PURCHASE
+  MATCH_REWARD
+  DAILY_MISSION
+  ACHIEVEMENT
+  COMPANION_FEED
+  REAL_ORDER_VERIFIED
+  QR_RECEIPT_REDEMPTION
+  ADMIN_ADJUSTMENT
+  EVENT_REWARD
+}
+
+enum ItemType {
+  CONSUMABLE
+  COSMETIC
+}
+
+enum ItemRarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+  MYTHIC
+}
+
+enum CosmeticSlot {
+  HEAD
+  FACE
+  BODY
+  BACK
+  AURA
+  NAME_FRAME
+}
+
+enum InventoryLedgerDirection {
+  GRANT
+  CONSUME
+  REVOKE
+}
+
 model User {
   id                String            @id @default(uuid())
   role              UserRole          @default(PLAYER)
@@ -41,6 +100,14 @@ model User {
   profile           PlayerProfile?
   careState         CompanionCareState?
   careActionLogs    CompanionActionLog[]
+
+  // Phase 4 relations
+  currencyAccounts  CurrencyAccount[]
+  currencyLedger    CurrencyLedgerEntry[]
+  inventory         UserInventory[]
+  inventoryLedger   InventoryLedgerEntry[]
+  shopPurchases     ShopPurchase[]
+  equippedCosmetics EquippedCosmetic[]
 
   @@map("users")
 }
@@ -170,4 +237,173 @@ model CompanionActionLog {
   @@unique([userId, clientActionId])
   @@index([userId])
   @@map("companion_action_logs")
+}
+
+// Phase 4: Server-Authoritative Economy, Inventory, Shop & Cosmetics
+
+model CurrencyAccount {
+  id                String             @id @default(uuid())
+  userId            String
+  currencyKind      CurrencyKind
+  scopeType         CurrencyScopeType?
+  scopeId           String?
+  balance           BigInt             @default(0)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, currencyKind, scopeType, scopeId])
+  @@index([userId])
+  @@map("currency_accounts")
+}
+
+model CurrencyLedgerEntry {
+  id                 String               @id @default(uuid())
+  userId             String
+  currencyKind       CurrencyKind
+  scopeType          CurrencyScopeType?
+  scopeId            String?
+  direction          LedgerDirection
+  amount             BigInt
+  balanceAfter       BigInt
+  sourceType         CurrencyLedgerSource
+  sourceId           String?
+  idempotencyKey     String
+  requestFingerprint String?
+  metadata           Json?
+  createdAt          DateTime             @default(now())
+
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([currencyKind, scopeType, scopeId])
+  @@map("currency_ledger_entries")
+}
+
+model ItemDefinition {
+  id                String          @id @default(uuid())
+  slug              String          @unique
+  type              ItemType
+  rarity            ItemRarity
+  nameAr            String
+  nameEn            String
+  descriptionAr     String
+  descriptionEn     String
+  assetKey          String
+  cosmeticSlot      CosmeticSlot?
+  hungerDelta       Float?
+  cleanlinessDelta  Float?
+  energyDelta       Float?
+  moodDelta         Float?
+  reactionKey       String?
+  isActive          Boolean         @default(true)
+  isStackable       Boolean         @default(false)
+  sortOrder         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  inventories       UserInventory[]
+  shopOffers        ShopOffer[]
+  equippedBy        EquippedCosmetic[]
+  purchases         ShopPurchase[]
+
+  @@map("item_definitions")
+}
+
+model UserInventory {
+  id                String          @id @default(uuid())
+  userId            String
+  itemId            String
+  quantity          Int             @default(1)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item              ItemDefinition  @relation(fields: [itemId], references: [id])
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("user_inventories")
+}
+
+model InventoryLedgerEntry {
+  id                 String                   @id @default(uuid())
+  userId             String
+  itemId             String
+  direction          InventoryLedgerDirection
+  quantity           Int
+  quantityAfter      Int
+  sourceType         String
+  sourceId           String?
+  idempotencyKey     String
+  metadata           Json?
+  createdAt          DateTime                 @default(now())
+
+  user               User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@map("inventory_ledger_entries")
+}
+
+model ShopOffer {
+  id                String             @id @default(uuid())
+  slug              String             @unique
+  itemId            String
+  itemQuantity      Int                @default(1)
+  currencyKind      CurrencyKind
+  currencyScopeType CurrencyScopeType?
+  currencyScopeId   String?
+  priceAmount       BigInt
+  isActive          Boolean            @default(true)
+  sortOrder         Int                @default(0)
+  startsAt          DateTime?
+  endsAt            DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  item              ItemDefinition     @relation(fields: [itemId], references: [id])
+  purchases         ShopPurchase[]
+
+  @@map("shop_offers")
+}
+
+model ShopPurchase {
+  id                 String             @id @default(uuid())
+  userId             String
+  offerId            String
+  itemId             String
+  itemQuantity       Int
+  currencyKind       CurrencyKind
+  currencyScopeType  CurrencyScopeType?
+  currencyScopeId    String?
+  priceAmount        BigInt
+  clientTransactionId String
+  requestFingerprint String
+  createdAt          DateTime           @default(now())
+
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  offer              ShopOffer          @relation(fields: [offerId], references: [id])
+  item               ItemDefinition     @relation(fields: [itemId], references: [id])
+
+  @@unique([userId, clientTransactionId])
+  @@index([userId])
+  @@map("shop_purchases")
+}
+
+model EquippedCosmetic {
+  id                String          @id @default(uuid())
+  userId            String
+  slot              CosmeticSlot
+  itemId            String
+  equippedAt        DateTime        @default(now())
+
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item              ItemDefinition  @relation(fields: [itemId], references: [id])
+
+  @@unique([userId, slot])
+  @@index([userId])
+  @@map("equipped_cosmetics")
 }

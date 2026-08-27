@@ -17,20 +17,28 @@ import {
   useToast,
 } from '@o2/ui';
 import {
-  mockBalances,
   mockParty,
   mockDailyMissions,
 } from '../../src/data/mockData';
 import { useAuth } from '../../src/context/AuthContext';
 import { useCompanion } from '../../src/context/CompanionContext';
+import { useEconomy } from '../../src/context/EconomyContext';
 import { CompanionCareActionType } from '@o2/types';
 
 export default function HomeScreen() {
   const router = useRouter();
   const { profile } = useAuth();
   const { companionState, isActing, activeReaction, performAction } = useCompanion();
+  const { coins, gems, eventTokens, equippedCosmetics, initializeEconomy } = useEconomy();
   const { showToast } = useToast();
   const [showRewardModal, setShowRewardModal] = useState(false);
+
+  // Auto initialize welcome economy on first profile load
+  React.useEffect(() => {
+    if (profile?.isOnboarded) {
+      initializeEconomy();
+    }
+  }, [profile, initializeEconomy]);
 
   const handleAction = async (action: CompanionCareActionType) => {
     try {
@@ -79,9 +87,9 @@ export default function HomeScreen() {
         </View>
 
         <CurrencyBar
-          coins={mockBalances.coins}
-          gems={mockBalances.gems}
-          eventTokens={mockBalances.eventTokens?.[0]?.balance}
+          coins={coins}
+          gems={gems}
+          eventTokens={eventTokens?.[0]?.balance}
         />
       </View>
 
@@ -102,7 +110,14 @@ export default function HomeScreen() {
             expression={companionState?.expression || 'HAPPY'}
             reaction={activeReaction}
             isSleeping={isSleeping}
-            equippedCosmetics={{ hatSlug: 'golden_crown' }}
+            equippedCosmetics={{
+              headSlug: equippedCosmetics?.HEAD?.item?.slug,
+              faceSlug: equippedCosmetics?.FACE?.item?.slug,
+              bodySlug: equippedCosmetics?.BODY?.item?.slug,
+              backSlug: equippedCosmetics?.BACK?.item?.slug,
+              auraSlug: equippedCosmetics?.AURA?.item?.slug,
+              nameFrameSlug: equippedCosmetics?.NAME_FRAME?.item?.slug,
+            }}
             onTap={handleCompanionTap}
             scale={1.15}
           />

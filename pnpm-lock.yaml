@@ -221,6 +221,9 @@ importers:
       '@o2/config':
         specifier: workspace:*
         version: link:../config
+      '@types/node':
+        specifier: ^22.13.9
+        version: 22.20.1
       typescript:
         specifier: ^5.8.2
         version: 5.9.3

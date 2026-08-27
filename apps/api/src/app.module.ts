@@ -8,7 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { ProfileModule } from './profile/profile.module';
 import { CompanionModule } from './companion/companion.module';
 import { HealthModule } from './modules/health/health.module';
-import { EconomyModule } from './modules/economy/economy.module';
+import { EconomyModule } from './economy/economy.module';
 import { SocialModule } from './modules/social/social.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { GameRoomModule } from './modules/game-room/game-room.module';

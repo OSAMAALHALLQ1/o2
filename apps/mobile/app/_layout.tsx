@@ -5,6 +5,7 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { DirectionProvider, ToastProvider, colors } from '@o2/ui';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { CompanionProvider } from '../src/context/CompanionContext';
+import { EconomyProvider } from '../src/context/EconomyContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -56,8 +57,10 @@ export default function RootLayout() {
       <ToastProvider>
         <AuthProvider>
           <CompanionProvider>
-            <StatusBar style="light" />
-            <RootNavigation />
+            <EconomyProvider>
+              <StatusBar style="light" />
+              <RootNavigation />
+            </EconomyProvider>
           </CompanionProvider>
         </AuthProvider>
       </ToastProvider>

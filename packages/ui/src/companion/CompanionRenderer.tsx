@@ -15,14 +15,22 @@ import {
 } from '@o2/types';
 import { colors, radius, spacing, typography, elevation } from '../tokens';
 
+export interface CompanionEquippedCosmetics {
+  headSlug?: string;
+  faceSlug?: string;
+  bodySlug?: string;
+  backSlug?: string;
+  auraSlug?: string;
+  nameFrameSlug?: string;
+  hatSlug?: string;
+}
+
 export interface CompanionRendererProps {
   characterSlug?: string;
   expression?: CompanionExpression;
   mood?: CompanionMood;
   reaction?: CompanionReaction | null;
-  equippedCosmetics?: {
-    hatSlug?: string;
-  };
+  equippedCosmetics?: CompanionEquippedCosmetics;
   currentAnimation?: CompanionAnimation;
   isSleeping?: boolean;
   onTap?: () => void;
@@ -209,10 +217,30 @@ export const CompanionRenderer: React.FC<CompanionRendererProps> = ({
           { transform: [{ translateY: isSleeping ? 0 : floatAnim }] },
         ]}
       >
-        {/* Cosmetics Accessories Layer Placeholder */}
-        {equippedCosmetics?.hatSlug && (
+        {/* Aura particle layer */}
+        {equippedCosmetics?.auraSlug && (
+          <View style={styles.auraSparkleLayer}>
+            <Text style={styles.auraSparkleEmoji}>✨</Text>
+          </View>
+        )}
+
+        {/* Back Accessory Layer */}
+        {equippedCosmetics?.backSlug && (
+          <View style={styles.backLayer}>
+            <Text style={styles.backEmoji}>🎒</Text>
+          </View>
+        )}
+
+        {/* Head Cosmetic Accessory Layer */}
+        {(equippedCosmetics?.headSlug || equippedCosmetics?.hatSlug) && (
           <View style={styles.hatLayer}>
-            <Text style={styles.hatEmoji}>👑</Text>
+            <Text style={styles.hatEmoji}>
+              {equippedCosmetics.headSlug?.includes('headphone')
+                ? '🎧'
+                : equippedCosmetics.headSlug?.includes('cap')
+                ? '🧢'
+                : '👑'}
+            </Text>
           </View>
         )}
 
@@ -221,9 +249,24 @@ export const CompanionRenderer: React.FC<CompanionRendererProps> = ({
           style={[
             styles.mascotBody,
             isSleeping && styles.mascotBodySleeping,
+            equippedCosmetics?.nameFrameSlug && styles.mascotBodyGoldFrame,
           ]}
         >
           <Text style={styles.mascotEmoji}>{mascotEmoji}</Text>
+
+          {/* Face cosmetic overlay */}
+          {equippedCosmetics?.faceSlug && (
+            <View style={styles.faceLayer}>
+              <Text style={styles.faceEmoji}>🕶️</Text>
+            </View>
+          )}
+
+          {/* Body outfit overlay */}
+          {equippedCosmetics?.bodySlug && (
+            <View style={styles.bodyLayer}>
+              <Text style={styles.bodyEmoji}>👔</Text>
+            </View>
+          )}
         </View>
 
         {/* Expression Badge */}
@@ -332,6 +375,45 @@ const styles = StyleSheet.create({
     borderColor: colors.rarity.epic,
     backgroundColor: '#16132b',
     opacity: 0.92,
+  },
+  mascotBodyGoldFrame: {
+    borderColor: colors.rarity.epic,
+    borderWidth: 4,
+    ...elevation.glowGold,
+  },
+  auraSparkleLayer: {
+    position: 'absolute',
+    top: -24,
+    right: -10,
+    zIndex: 5,
+  },
+  auraSparkleEmoji: {
+    fontSize: 28,
+  },
+  backLayer: {
+    position: 'absolute',
+    bottom: 10,
+    left: -12,
+    zIndex: 2,
+  },
+  backEmoji: {
+    fontSize: 30,
+  },
+  faceLayer: {
+    position: 'absolute',
+    top: 48,
+    zIndex: 12,
+  },
+  faceEmoji: {
+    fontSize: 26,
+  },
+  bodyLayer: {
+    position: 'absolute',
+    bottom: 10,
+    zIndex: 11,
+  },
+  bodyEmoji: {
+    fontSize: 24,
   },
   mascotEmoji: {
     fontSize: 74,
