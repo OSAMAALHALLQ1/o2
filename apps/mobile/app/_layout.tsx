@@ -7,7 +7,7 @@ export default function RootLayout() {
   return (
     <DirectionProvider initialDirection="rtl">
       <ToastProvider>
-        <StatusBar style="light" backgroundColor={colors.surfaces.background} />
+        <StatusBar style="light" />
         <Stack
           screenOptions={{
             headerShown: false,

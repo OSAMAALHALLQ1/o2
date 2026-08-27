@@ -6,9 +6,6 @@
     "orientation": "portrait",
     "scheme": "o2universe",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "backgroundColor": "#0A0E17"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.o2.universe"
