@@ -4,7 +4,6 @@
     "slug": "o2-universe",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "scheme": "o2universe",
     "userInterfaceStyle": "dark",
     "splash": {
