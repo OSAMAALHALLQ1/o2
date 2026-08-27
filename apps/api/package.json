@@ -8,7 +8,7 @@
     "build": "nest build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 10",
-    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/refresh.spec.ts test/jwt.spec.ts test/onboarding.spec.ts test/oauth.spec.ts"
+    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/postgres.concurrency.spec.ts test/auth.e2e-flow.spec.ts test/refresh.spec.ts test/jwt.spec.ts test/onboarding.spec.ts test/oauth.spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.11",
@@ -28,6 +28,7 @@
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.7",
     "@nestjs/cli": "^11.0.5",
     "@nestjs/schematics": "^11.0.2",
     "@o2/config": "workspace:*",
