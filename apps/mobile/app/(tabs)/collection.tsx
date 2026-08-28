@@ -128,13 +128,17 @@ export default function CollectionScreen() {
 
   const handleBuyOffer = async (offer: any) => {
     const isGems = offer.currencyKind === 'GEM';
-    const userBalance = isGems ? gems : coins;
+    const eventBalance = eventTokens.find(
+      (token) => token.scopeType === offer.currencyScopeType && token.scopeId === offer.currencyScopeId,
+    )?.balance ?? 0;
+    const userBalance = isGems ? gems : offer.currencyKind === 'EVENT_TOKEN' ? eventBalance : coins;
+    const currencyLabel = isGems ? 'جوهرة 💎' : offer.currencyKind === 'EVENT_TOKEN' ? 'رمز فعالية 🎟️' : 'عملة 🪙';
 
     if (userBalance < offer.priceAmount) {
       showToast({
         type: 'error',
         title: 'رصيد غير كافٍ',
-        message: `تحتاج إلى ${offer.priceAmount} ${isGems ? 'جوهرة 💎' : 'عملة 🪙'} لإتمام الشراء.`,
+        message: `تحتاج إلى ${offer.priceAmount} ${currencyLabel} لإتمام الشراء.`,
       });
       return;
     }
@@ -291,6 +295,7 @@ export default function CollectionScreen() {
           ) : (
             filteredOffers.map((offer) => {
               const isGems = offer.currencyKind === 'GEM';
+              const isEventToken = offer.currencyKind === 'EVENT_TOKEN';
               const isOwnedCosmetic =
                 offer.item.type === 'COSMETIC' &&
                 inventory.some((inv) => inv.itemId === offer.itemId && inv.quantity >= 1);
@@ -316,7 +321,7 @@ export default function CollectionScreen() {
 
                     <View style={styles.priceRow}>
                       <Text style={isGems ? styles.gemPriceText : styles.coinPriceText}>
-                        {offer.priceAmount} {isGems ? '💎' : '🪙'}
+                        {offer.priceAmount} {isGems ? '💎' : isEventToken ? '🎟️' : '🪙'}
                       </Text>
 
                       {isOwnedCosmetic ? (

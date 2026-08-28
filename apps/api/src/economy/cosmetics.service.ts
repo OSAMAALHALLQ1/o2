@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
@@ -12,7 +13,7 @@ import {
   ItemType,
   ItemRarity,
 } from '@o2/types';
-import { EconomyErrorCodes } from '@o2/game-core';
+import { EconomyErrorCodes, hashEconomyRequest } from '@o2/game-core';
 
 @Injectable()
 export class CosmeticsService {
@@ -24,9 +25,21 @@ export class CosmeticsService {
    * Retrieves all equipped cosmetics for a user mapped by slot.
    */
   async getEquippedCosmetics(userId: string): Promise<EquippedCosmeticsOverviewDto> {
+    const profile = await this.prisma.playerProfile.findUnique({
+      where: { userId },
+      select: { selectedCharacterId: true },
+    });
     const equipped = await this.prisma.equippedCosmetic.findMany({
       where: { userId },
-      include: { item: true },
+      include: {
+        item: {
+          include: {
+            cosmeticVariants: profile?.selectedCharacterId
+              ? { where: { characterId: profile.selectedCharacterId }, take: 1 }
+              : false,
+          },
+        },
+      },
     });
 
     const equippedMap: Record<string, EquippedCosmeticDto> = {};
@@ -44,7 +57,7 @@ export class CosmeticsService {
           nameEn: eq.item.nameEn,
           descriptionAr: eq.item.descriptionAr,
           descriptionEn: eq.item.descriptionEn,
-          assetKey: eq.item.assetKey,
+          assetKey: eq.item.cosmeticVariants?.[0]?.assetKey ?? eq.item.assetKey,
           cosmeticSlot: eq.item.cosmeticSlot as CosmeticSlot | null,
           hungerDelta: eq.item.hungerDelta,
           cleanlinessDelta: eq.item.cleanlinessDelta,
@@ -66,7 +79,11 @@ export class CosmeticsService {
    * Equips an owned cosmetic item to its defined slot.
    * Atomically replaces previous cosmetic in that slot.
    */
-  async equipCosmetic(userId: string, itemId: string, _clientTransactionId: string) {
+  async equipCosmetic(userId: string, itemId: string, clientTransactionId: string) {
+    const requestFingerprint = hashEconomyRequest(userId, 'EQUIP:v1', { itemId });
+    const cached = await this.getCachedAction(userId, clientTransactionId, requestFingerprint);
+    if (cached) return cached;
+
     const item = await this.prisma.itemDefinition.findUnique({
       where: { id: itemId },
     });
@@ -85,6 +102,22 @@ export class CosmeticsService {
       });
     }
 
+    const profile = await this.prisma.playerProfile.findUnique({
+      where: { userId },
+      select: { selectedCharacterId: true },
+    });
+    const compatibleVariant = profile?.selectedCharacterId
+      ? await this.prisma.cosmeticVariant.findUnique({
+          where: { itemId_characterId: { itemId, characterId: profile.selectedCharacterId } },
+        })
+      : null;
+    if (!compatibleVariant) {
+      throw new BadRequestException({
+        code: EconomyErrorCodes.COSMETIC_INCOMPATIBLE,
+        message: 'هذا العنصر غير متوافق مع الرفيق المحدد.',
+      });
+    }
+
     // Verify ownership in inventory
     const inventory = await this.prisma.userInventory.findUnique({
       where: { userId_itemId: { userId, itemId } },
@@ -99,51 +132,132 @@ export class CosmeticsService {
 
     const slot = item.cosmeticSlot;
 
-    // Atomically replace/upsert equipped item for the slot
-    const equipped = await this.prisma.equippedCosmetic.upsert({
-      where: { userId_slot: { userId, slot } },
-      update: {
-        itemId,
-        equippedAt: new Date(),
-      },
-      create: {
-        userId,
-        slot,
-        itemId,
-      },
-      include: { item: true },
-    });
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+        const inTxCached = await tx.cosmeticActionRecord.findUnique({
+          where: { userId_clientTransactionId: { userId, clientTransactionId } },
+        });
+        if (inTxCached) {
+          this.assertActionFingerprint(inTxCached.requestFingerprint, requestFingerprint);
+          return inTxCached.responsePayload as any;
+        }
 
-    return {
-      status: 'EQUIPPED',
-      slot: equipped.slot as CosmeticSlot,
-      equippedCosmetic: {
-        slot: equipped.slot as CosmeticSlot,
-        itemId: equipped.itemId,
-        item: equipped.item,
-        equippedAt: equipped.equippedAt.toISOString(),
-      },
-    };
+        const owned = await tx.userInventory.findUnique({
+          where: { userId_itemId: { userId, itemId } },
+        });
+        if (!owned || owned.quantity < 1) {
+          throw new BadRequestException({
+            code: EconomyErrorCodes.COSMETIC_NOT_OWNED,
+            message: 'لا يمكنك تجهيز عنصر لا تملكه في خزانة مقتنياتك.',
+          });
+        }
+
+        const equipped = await tx.equippedCosmetic.upsert({
+          where: { userId_slot: { userId, slot } },
+          update: { itemId, equippedAt: new Date() },
+          create: { userId, slot, itemId },
+          include: { item: true },
+        });
+        const response = {
+          status: 'EQUIPPED',
+          slot: equipped.slot as CosmeticSlot,
+          equippedCosmetic: {
+            slot: equipped.slot as CosmeticSlot,
+            itemId: equipped.itemId,
+            item: equipped.item,
+            equippedAt: equipped.equippedAt.toISOString(),
+          },
+        };
+        await tx.cosmeticActionRecord.create({
+          data: {
+            userId,
+            clientTransactionId,
+            requestFingerprint,
+            operation: 'EQUIP',
+            itemId,
+            slot,
+            responsePayload: response,
+          },
+        });
+        return response;
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002' || err?.message?.includes('23505')) {
+        const recovered = await this.getCachedAction(userId, clientTransactionId, requestFingerprint);
+        if (recovered) return recovered;
+      }
+      throw err;
+    }
   }
 
   /**
    * Unequips a cosmetic item from a given slot. Idempotent.
    */
-  async unequipCosmetic(userId: string, slot: CosmeticSlot, _clientTransactionId: string) {
-    const existing = await this.prisma.equippedCosmetic.findUnique({
-      where: { userId_slot: { userId, slot } },
-    });
+  async unequipCosmetic(userId: string, slot: CosmeticSlot, clientTransactionId: string) {
+    const requestFingerprint = hashEconomyRequest(userId, 'UNEQUIP:v1', { slot });
+    const cached = await this.getCachedAction(userId, clientTransactionId, requestFingerprint);
+    if (cached) return cached;
 
-    if (existing) {
-      await this.prisma.equippedCosmetic.delete({
-        where: { userId_slot: { userId, slot } },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+        const inTxCached = await tx.cosmeticActionRecord.findUnique({
+          where: { userId_clientTransactionId: { userId, clientTransactionId } },
+        });
+        if (inTxCached) {
+          this.assertActionFingerprint(inTxCached.requestFingerprint, requestFingerprint);
+          return inTxCached.responsePayload as any;
+        }
+
+        const existing = await tx.equippedCosmetic.findUnique({
+          where: { userId_slot: { userId, slot } },
+        });
+        if (existing) {
+          await tx.equippedCosmetic.delete({ where: { userId_slot: { userId, slot } } });
+        }
+        const response = {
+          status: 'UNEQUIPPED',
+          slot,
+          message: 'تم إلغاء تجهيز العنصر بنجاح.',
+        };
+        await tx.cosmeticActionRecord.create({
+          data: {
+            userId,
+            clientTransactionId,
+            requestFingerprint,
+            operation: 'UNEQUIP',
+            itemId: existing?.itemId ?? null,
+            slot,
+            responsePayload: response,
+          },
+        });
+        return response;
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002' || err?.message?.includes('23505')) {
+        const recovered = await this.getCachedAction(userId, clientTransactionId, requestFingerprint);
+        if (recovered) return recovered;
+      }
+      throw err;
+    }
+  }
+
+  private async getCachedAction(userId: string, clientTransactionId: string, requestFingerprint: string) {
+    const action = await this.prisma.cosmeticActionRecord.findUnique({
+      where: { userId_clientTransactionId: { userId, clientTransactionId } },
+    });
+    if (!action) return null;
+    this.assertActionFingerprint(action.requestFingerprint, requestFingerprint);
+    return action.responsePayload as any;
+  }
+
+  private assertActionFingerprint(saved: string, requested: string) {
+    if (saved !== requested) {
+      throw new ConflictException({
+        code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
+        message: 'Idempotency key reused with different request parameters.',
       });
     }
-
-    return {
-      status: 'UNEQUIPPED',
-      slot,
-      message: 'تم إلغاء تجهيز العنصر بنجاح.',
-    };
   }
 }

@@ -278,6 +278,11 @@ describe('Phase 4: Economy, Inventory, Shop & Cosmetics Security Spec', () => {
         [`acc_${userId}_coin`, userId, amount],
       );
       await db.query(
+        `INSERT INTO "currency_accounts" ("id", "userId", "currencyKind", "balance", "createdAt", "updatedAt")
+         VALUES ($1, $2, 'GEM', 0, NOW(), NOW())`,
+        [`acc_${userId}_gem`, userId],
+      );
+      await db.query(
         `INSERT INTO "currency_ledger_entries" ("id", "userId", "currencyKind", "direction", "amount", "balanceAfter", "sourceType", "idempotencyKey", "createdAt")
          VALUES ($1, $2, 'COIN', 'CREDIT', $3, $3, 'WELCOME_BONUS', $4, NOW())`,
         [`led_${userId}_01`, userId, amount, idempotencyKey],
@@ -288,9 +293,10 @@ describe('Phase 4: Economy, Inventory, Shop & Cosmetics Security Spec', () => {
       const row = (await db.query(`SELECT "balance" FROM "currency_accounts" WHERE "userId" = $1 AND "currencyKind" = 'COIN'`, [userId])).rows[0] as any;
       assert.equal(Number(row.balance), 500);
 
-      // Verify no Gems or Event tokens created
-      const otherAccounts = (await db.query(`SELECT * FROM "currency_accounts" WHERE "userId" = $1 AND "currencyKind" != 'COIN'`, [userId])).rows;
-      assert.equal(otherAccounts.length, 0);
+      const gem = (await db.query(`SELECT "balance" FROM "currency_accounts" WHERE "userId" = $1 AND "currencyKind" = 'GEM'`, [userId])).rows[0] as any;
+      assert.equal(Number(gem.balance), 0);
+      const eventAccounts = (await db.query(`SELECT * FROM "currency_accounts" WHERE "userId" = $1 AND "currencyKind" = 'EVENT_TOKEN'`, [userId])).rows;
+      assert.equal(eventAccounts.length, 0);
     });
 
     it('should reject double welcome grant on duplicate call', async () => {

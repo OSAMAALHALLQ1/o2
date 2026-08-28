@@ -39,6 +39,7 @@ export interface DebitOptions {
 export class EconomyService {
   private readonly logger = new Logger(EconomyService.name);
   public static readonly WELCOME_COINS = BigInt(500);
+  private static readonly MAX_SAFE_BALANCE = BigInt(Number.MAX_SAFE_INTEGER);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -85,16 +86,7 @@ export class EconomyService {
         });
 
         if (existingEntry) {
-          if (
-            options.requestFingerprint &&
-            existingEntry.requestFingerprint &&
-            existingEntry.requestFingerprint !== options.requestFingerprint
-          ) {
-            throw new ConflictException({
-              code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
-              message: 'Idempotency key reused with different request payload.',
-            });
-          }
+          this.assertLedgerReplayMatches(existingEntry, currencyKind, 'CREDIT', amountBigInt, sourceType, options);
           return {
             status: 'CACHED' as const,
             entry: existingEntry,
@@ -102,15 +94,16 @@ export class EconomyService {
           };
         }
 
+        // Lock the always-present user row so creation of an absent account is serialized.
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+
         // Step 2: Ensure account exists
-        let account = await tx.currencyAccount.findUnique({
+        let account = await tx.currencyAccount.findFirst({
           where: {
-            userId_currencyKind_scopeType_scopeId: {
-              userId,
-              currencyKind,
-              scopeType: options.scopeType || null,
-              scopeId: options.scopeId || null,
-            },
+            userId,
+            currencyKind,
+            scopeType: options.scopeType ?? null,
+            scopeId: options.scopeId ?? null,
           },
         });
 
@@ -127,10 +120,7 @@ export class EconomyService {
         }
 
         // Step 3: Lock account row
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "currency_accounts" WHERE "id" = $1 FOR UPDATE`,
-          account.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "currency_accounts" WHERE "id" = ${account.id} FOR UPDATE`;
 
         // Re-read locked balance
         const lockedAccount = await tx.currencyAccount.findUniqueOrThrow({
@@ -138,6 +128,12 @@ export class EconomyService {
         });
 
         const newBalanceBigInt = lockedAccount.balance + amountBigInt;
+        if (newBalanceBigInt > EconomyService.MAX_SAFE_BALANCE) {
+          throw new BadRequestException({
+            code: EconomyErrorCodes.INVALID_AMOUNT,
+            message: 'Resulting balance exceeds the supported safe integer range.',
+          });
+        }
 
         // Step 4: Insert ledger entry
         const entry = await tx.currencyLedgerEntry.create({
@@ -176,6 +172,7 @@ export class EconomyService {
           where: { userId_idempotencyKey: { userId, idempotencyKey } },
         });
         if (saved) {
+          this.assertLedgerReplayMatches(saved, currencyKind, 'CREDIT', amountBigInt, sourceType, options);
           return {
             status: 'RECOVERED' as const,
             entry: saved,
@@ -230,16 +227,7 @@ export class EconomyService {
         });
 
         if (existingEntry) {
-          if (
-            options.requestFingerprint &&
-            existingEntry.requestFingerprint &&
-            existingEntry.requestFingerprint !== options.requestFingerprint
-          ) {
-            throw new ConflictException({
-              code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
-              message: 'Idempotency key reused with different request payload.',
-            });
-          }
+          this.assertLedgerReplayMatches(existingEntry, currencyKind, 'DEBIT', amountBigInt, sourceType, options);
           return {
             status: 'CACHED' as const,
             entry: existingEntry,
@@ -248,14 +236,12 @@ export class EconomyService {
         }
 
         // Step 2: Load account
-        const account = await tx.currencyAccount.findUnique({
+        const account = await tx.currencyAccount.findFirst({
           where: {
-            userId_currencyKind_scopeType_scopeId: {
-              userId,
-              currencyKind,
-              scopeType: options.scopeType || null,
-              scopeId: options.scopeId || null,
-            },
+            userId,
+            currencyKind,
+            scopeType: options.scopeType ?? null,
+            scopeId: options.scopeId ?? null,
           },
         });
 
@@ -267,10 +253,7 @@ export class EconomyService {
         }
 
         // Step 3: Lock account row
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "currency_accounts" WHERE "id" = $1 FOR UPDATE`,
-          account.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "currency_accounts" WHERE "id" = ${account.id} FOR UPDATE`;
 
         // Re-read locked balance
         const lockedAccount = await tx.currencyAccount.findUniqueOrThrow({
@@ -322,6 +305,7 @@ export class EconomyService {
           where: { userId_idempotencyKey: { userId, idempotencyKey } },
         });
         if (saved) {
+          this.assertLedgerReplayMatches(saved, currencyKind, 'DEBIT', amountBigInt, sourceType, options);
           return {
             status: 'RECOVERED' as const,
             entry: saved,
@@ -339,7 +323,7 @@ export class EconomyService {
    */
   async initializeWelcomeEconomy(userId: string, clientTransactionId: string): Promise<EconomyOverviewDto> {
     const idempotencyKey = `welcome:${userId}`;
-    const fingerprint = hashEconomyRequest(userId, 'WELCOME_BONUS', { clientTransactionId });
+    const fingerprint = hashEconomyRequest(userId, 'WELCOME_BONUS:v1', { amount: 500, currencyKind: 'COIN' });
 
     // Execute credit of 500 Coins
     await this.creditCurrency(
@@ -353,6 +337,18 @@ export class EconomyService {
         metadata: { welcomeBonus: true, clientTransactionId },
       },
     );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+      const gemAccount = await tx.currencyAccount.findFirst({
+        where: { userId, currencyKind: 'GEM', scopeType: null, scopeId: null },
+      });
+      if (!gemAccount) {
+        await tx.currencyAccount.create({
+          data: { userId, currencyKind: 'GEM', scopeType: null, scopeId: null, balance: BigInt(0) },
+        });
+      }
+    });
 
     return this.getEconomyOverview(userId);
   }
@@ -412,8 +408,8 @@ export class EconomyService {
     page: number = 1,
     limit: number = 20,
   ): Promise<{ data: CurrencyLedgerEntryDto[]; total: number; page: number; limit: number }> {
-    const safeLimit = Math.min(Math.max(1, limit), 50);
-    const safePage = Math.max(1, page);
+    const safeLimit = Number.isInteger(limit) ? Math.min(Math.max(1, limit), 50) : 20;
+    const safePage = Number.isInteger(page) ? Math.max(1, page) : 1;
     const skip = (safePage - 1) * safeLimit;
 
     const [entries, total] = await Promise.all([
@@ -451,50 +447,70 @@ export class EconomyService {
    * Asserts sum(credits) - sum(debits) === CurrencyAccount.balance for each account of user.
    */
   async reconcileUserLedger(userId: string): Promise<{ isReconciled: boolean; differences: any[] }> {
-    const accounts = await this.prisma.currencyAccount.findMany({ where: { userId } });
-    const differences: any[] = [];
+    const rows = await this.prisma.$queryRaw<Array<{
+      currencyKind: CurrencyKind;
+      scopeType: CurrencyScopeType | null;
+      scopeId: string | null;
+      projectedBalance: bigint | null;
+      calculatedFromLedger: bigint | null;
+    }>>`
+      WITH accounts AS (
+        SELECT * FROM "currency_accounts" WHERE "userId" = ${userId}
+      ), ledger AS (
+        SELECT "currencyKind", "scopeType", "scopeId",
+          SUM(CASE WHEN "direction" = 'CREDIT' THEN "amount" ELSE -"amount" END)::bigint AS balance
+        FROM "currency_ledger_entries"
+        WHERE "userId" = ${userId}
+        GROUP BY "currencyKind", "scopeType", "scopeId"
+      )
+      SELECT COALESCE(a."currencyKind", l."currencyKind") AS "currencyKind",
+        COALESCE(a."scopeType", l."scopeType") AS "scopeType",
+        COALESCE(a."scopeId", l."scopeId") AS "scopeId",
+        a."balance" AS "projectedBalance", l.balance AS "calculatedFromLedger"
+      FROM accounts a
+      FULL OUTER JOIN ledger l
+        ON a."currencyKind" = l."currencyKind"
+       AND a."scopeType" IS NOT DISTINCT FROM l."scopeType"
+       AND a."scopeId" IS NOT DISTINCT FROM l."scopeId"
+      WHERE COALESCE(a."balance", -1) <> COALESCE(l.balance, 0)
+    `;
 
-    for (const acc of accounts) {
-      const credits = await this.prisma.currencyLedgerEntry.aggregate({
-        where: {
-          userId,
-          currencyKind: acc.currencyKind,
-          scopeType: acc.scopeType,
-          scopeId: acc.scopeId,
-          direction: 'CREDIT',
-        },
-        _sum: { amount: true },
-      });
-
-      const debits = await this.prisma.currencyLedgerEntry.aggregate({
-        where: {
-          userId,
-          currencyKind: acc.currencyKind,
-          scopeType: acc.scopeType,
-          scopeId: acc.scopeId,
-          direction: 'DEBIT',
-        },
-        _sum: { amount: true },
-      });
-
-      const totalCredits = credits._sum.amount ?? BigInt(0);
-      const totalDebits = debits._sum.amount ?? BigInt(0);
-      const expectedBalance = totalCredits - totalDebits;
-
-      if (expectedBalance !== acc.balance) {
-        differences.push({
-          currencyKind: acc.currencyKind,
-          scopeType: acc.scopeType,
-          scopeId: acc.scopeId,
-          projectedBalance: acc.balance.toString(),
-          calculatedFromLedger: expectedBalance.toString(),
-        });
-      }
-    }
+    const differences = rows.map((row) => ({
+      currencyKind: row.currencyKind,
+      scopeType: row.scopeType,
+      scopeId: row.scopeId,
+      projectedBalance: row.projectedBalance?.toString() ?? null,
+      calculatedFromLedger: row.calculatedFromLedger?.toString() ?? '0',
+    }));
 
     return {
       isReconciled: differences.length === 0,
       differences,
     };
+  }
+
+  private assertLedgerReplayMatches(
+    entry: any,
+    currencyKind: CurrencyKind,
+    direction: 'CREDIT' | 'DEBIT',
+    amount: bigint,
+    sourceType: CurrencyLedgerSource,
+    options: CreditOptions | DebitOptions,
+  ) {
+    const matches =
+      entry.currencyKind === currencyKind &&
+      entry.direction === direction &&
+      entry.amount === amount &&
+      entry.sourceType === sourceType &&
+      entry.sourceId === (options.sourceId || null) &&
+      entry.scopeType === (options.scopeType ?? null) &&
+      entry.scopeId === (options.scopeId ?? null) &&
+      (entry.requestFingerprint ?? null) === (options.requestFingerprint ?? null);
+    if (!matches) {
+      throw new ConflictException({
+        code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
+        message: 'Idempotency key reused with different request payload.',
+      });
+    }
   }
 }

@@ -85,7 +85,7 @@ export class ShopService {
    * Purchases a shop offer atomically in a single PostgreSQL transaction with strict row locking.
    */
   async purchaseOffer(userId: string, offerId: string, clientTransactionId: string): Promise<ShopPurchaseDto> {
-    const requestFingerprint = hashEconomyRequest(userId, 'SHOP_PURCHASE', { offerId, clientTransactionId });
+    const requestFingerprint = hashEconomyRequest(userId, 'PURCHASE:v1', { offerId });
 
     // Step 1: Check existing purchase record for idempotency
     const existingPurchase = await this.prisma.shopPurchase.findUnique({
@@ -94,7 +94,7 @@ export class ShopService {
     });
 
     if (existingPurchase) {
-      if (existingPurchase.requestFingerprint !== requestFingerprint || existingPurchase.offerId !== offerId) {
+      if (!this.purchaseReplayMatches(existingPurchase, requestFingerprint, offerId)) {
         throw new ConflictException({
           code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
           message: 'Idempotency key reused with different request parameters.',
@@ -104,17 +104,6 @@ export class ShopService {
       const inv = await this.prisma.userInventory.findUnique({
         where: { userId_itemId: { userId, itemId: existingPurchase.itemId } },
         include: { item: true },
-      });
-
-      const account = await this.prisma.currencyAccount.findUnique({
-        where: {
-          userId_currencyKind_scopeType_scopeId: {
-            userId,
-            currencyKind: existingPurchase.currencyKind,
-            scopeType: existingPurchase.currencyScopeType,
-            scopeId: existingPurchase.currencyScopeId,
-          },
-        },
       });
 
       return {
@@ -129,10 +118,10 @@ export class ShopService {
         inventoryItem: {
           id: inv?.id ?? '',
           itemId: existingPurchase.itemId,
-          quantity: inv?.quantity ?? 1,
+          quantity: existingPurchase.quantityAfter,
           item: existingPurchase.item as any,
         },
-        newBalance: Number(account?.balance ?? 0),
+        newBalance: Number(existingPurchase.balanceAfter),
       };
     }
 
@@ -173,25 +162,23 @@ export class ShopService {
     // Step 3: Atomic Purchase Transaction with Deterministic Locking Order
     try {
       return await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
+
         // Double check idempotency in transaction
         const inTxExisting = await tx.shopPurchase.findUnique({
           where: { userId_clientTransactionId: { userId, clientTransactionId } },
           include: { item: true },
         });
         if (inTxExisting) {
+          if (!this.purchaseReplayMatches(inTxExisting, requestFingerprint, offerId)) {
+            throw new ConflictException({
+              code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
+              message: 'Idempotency key reused with different request parameters.',
+            });
+          }
           const inv = await tx.userInventory.findUnique({
             where: { userId_itemId: { userId, itemId: inTxExisting.itemId } },
             include: { item: true },
-          });
-          const account = await tx.currencyAccount.findUnique({
-            where: {
-              userId_currencyKind_scopeType_scopeId: {
-                userId,
-                currencyKind: inTxExisting.currencyKind,
-                scopeType: inTxExisting.currencyScopeType,
-                scopeId: inTxExisting.currencyScopeId,
-              },
-            },
           });
           return {
             id: inTxExisting.id,
@@ -205,22 +192,20 @@ export class ShopService {
             inventoryItem: {
               id: inv?.id ?? '',
               itemId: inTxExisting.itemId,
-              quantity: inv?.quantity ?? 1,
+              quantity: inTxExisting.quantityAfter,
               item: inTxExisting.item as any,
             },
-            newBalance: Number(account?.balance ?? 0),
+            newBalance: Number(inTxExisting.balanceAfter),
           };
         }
 
         // Lock order 1: Currency Account
-        const account = await tx.currencyAccount.findUnique({
+        const account = await tx.currencyAccount.findFirst({
           where: {
-            userId_currencyKind_scopeType_scopeId: {
-              userId,
-              currencyKind: offer.currencyKind,
-              scopeType: offer.currencyScopeType,
-              scopeId: offer.currencyScopeId,
-            },
+            userId,
+            currencyKind: offer.currencyKind,
+            scopeType: offer.currencyScopeType,
+            scopeId: offer.currencyScopeId,
           },
         });
 
@@ -231,10 +216,7 @@ export class ShopService {
           });
         }
 
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "currency_accounts" WHERE "id" = $1 FOR UPDATE`,
-          account.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "currency_accounts" WHERE "id" = ${account.id} FOR UPDATE`;
 
         const lockedAccount = await tx.currencyAccount.findUniqueOrThrow({
           where: { id: account.id },
@@ -289,19 +271,19 @@ export class ShopService {
           });
         }
 
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "user_inventories" WHERE "id" = $1 FOR UPDATE`,
-          inventory.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "user_inventories" WHERE "id" = ${inventory.id} FOR UPDATE`;
 
         const lockedInv = await tx.userInventory.findUniqueOrThrow({
           where: { id: inventory.id },
           include: { item: true },
         });
 
-        let newQty = lockedInv.quantity + offer.itemQuantity;
-        if (!lockedInv.item.isStackable && newQty > 1) {
-          newQty = 1;
+        const newQty = lockedInv.quantity + offer.itemQuantity;
+        if (!lockedInv.item.isStackable && (lockedInv.quantity > 0 || offer.itemQuantity !== 1)) {
+          throw new ConflictException({
+            code: EconomyErrorCodes.ITEM_ALREADY_OWNED,
+            message: 'لا يمكن شراء هذا العنصر غير القابل للتكديس أكثر من مرة.',
+          });
         }
 
         const updatedInv = await tx.userInventory.update({
@@ -322,6 +304,7 @@ export class ShopService {
             sourceType: 'SHOP_PURCHASE',
             sourceId: offer.id,
             idempotencyKey: invLedgerKey,
+            requestFingerprint,
             metadata: { clientTransactionId },
           },
         });
@@ -339,6 +322,8 @@ export class ShopService {
             priceAmount: offer.priceAmount,
             clientTransactionId,
             requestFingerprint,
+            balanceAfter: newBalance,
+            quantityAfter: newQty,
           },
           include: { item: true },
         });
@@ -368,19 +353,15 @@ export class ShopService {
           include: { item: true },
         });
         if (saved) {
+          if (!this.purchaseReplayMatches(saved, requestFingerprint, offerId)) {
+            throw new ConflictException({
+              code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
+              message: 'Idempotency key reused with different request parameters.',
+            });
+          }
           const inv = await this.prisma.userInventory.findUnique({
             where: { userId_itemId: { userId, itemId: saved.itemId } },
             include: { item: true },
-          });
-          const account = await this.prisma.currencyAccount.findUnique({
-            where: {
-              userId_currencyKind_scopeType_scopeId: {
-                userId,
-                currencyKind: saved.currencyKind,
-                scopeType: saved.currencyScopeType,
-                scopeId: saved.currencyScopeId,
-              },
-            },
           });
           return {
             id: saved.id,
@@ -394,14 +375,24 @@ export class ShopService {
             inventoryItem: {
               id: inv?.id ?? '',
               itemId: saved.itemId,
-              quantity: inv?.quantity ?? 1,
+              quantity: saved.quantityAfter,
               item: saved.item as any,
             },
-            newBalance: Number(account?.balance ?? 0),
+            newBalance: Number(saved.balanceAfter),
           };
         }
       }
       throw err;
     }
+  }
+
+  private purchaseReplayMatches(
+    purchase: { requestFingerprint: string; offerId: string },
+    requestFingerprint: string,
+    offerId: string,
+  ) {
+    return purchase.offerId === offerId &&
+      (purchase.requestFingerprint === requestFingerprint ||
+        purchase.requestFingerprint === `legacy-purchase:${offerId}`);
   }
 }

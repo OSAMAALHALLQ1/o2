@@ -18,6 +18,7 @@ import {
   unequipCosmeticApi,
 } from '../api/economy';
 import { useAuth } from './AuthContext';
+import { useCompanion } from './CompanionContext';
 
 interface EconomyContextType {
   coins: number;
@@ -40,6 +41,7 @@ const EconomyContext = createContext<EconomyContextType | undefined>(undefined);
 
 export const EconomyProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { authState, profile } = useAuth();
+  const { refreshCareState } = useCompanion();
   const [coins, setCoins] = useState<number>(0);
   const [gems, setGems] = useState<number>(0);
   const [eventTokens, setEventTokens] = useState<{ scopeType: string; scopeId: string; balance: number }[]>([]);
@@ -114,7 +116,6 @@ export const EconomyProvider: React.FC<{ children: ReactNode }> = ({ children })
       try {
         setIsPurchasing(true);
         const purchase = await purchaseShopOfferApi(offerId, clientTransactionId);
-        setCoins(purchase.newBalance);
         await refreshEconomy();
         return purchase;
       } finally {
@@ -128,10 +129,10 @@ export const EconomyProvider: React.FC<{ children: ReactNode }> = ({ children })
     async (itemId: string): Promise<any> => {
       const clientTransactionId = `use_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const result = await useConsumableItemApi(itemId, clientTransactionId);
-      await refreshEconomy();
+      await Promise.all([refreshEconomy(), refreshCareState()]);
       return result;
     },
-    [refreshEconomy],
+    [refreshEconomy, refreshCareState],
   );
 
   const equipCosmetic = useCallback(

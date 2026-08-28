@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import {
 } from '@o2/types';
 import {
   applyConsumableItem,
+  hashEconomyRequest,
   EconomyErrorCodes,
 } from '@o2/game-core';
 
@@ -35,9 +37,17 @@ export class InventoryService {
     sourceId?: string,
     metadata?: Record<string, unknown>,
   ) {
-    if (quantity <= 0) {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
       throw new BadRequestException('Quantity must be greater than zero.');
     }
+
+    const normalizedSourceId = sourceId || null;
+    const requestFingerprint = hashEconomyRequest(userId, 'GRANT_ITEM:v1', {
+      itemId,
+      quantity,
+      sourceType,
+      sourceId: normalizedSourceId,
+    });
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -47,6 +57,15 @@ export class InventoryService {
         });
 
         if (existingEntry) {
+          this.assertInventoryReplayMatches(
+            existingEntry,
+            itemId,
+            'GRANT',
+            quantity,
+            sourceType,
+            normalizedSourceId,
+            requestFingerprint,
+          );
           const inv = await tx.userInventory.findUnique({
             where: { userId_itemId: { userId, itemId } },
             include: { item: true },
@@ -57,6 +76,8 @@ export class InventoryService {
             inventory: inv,
           };
         }
+
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
 
         // Step 2: Lock or create inventory row
         let inventory = await tx.userInventory.findUnique({
@@ -74,10 +95,7 @@ export class InventoryService {
         }
 
         // Lock row
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "user_inventories" WHERE "id" = $1 FOR UPDATE`,
-          inventory.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "user_inventories" WHERE "id" = ${inventory.id} FOR UPDATE`;
 
         const lockedInv = await tx.userInventory.findUniqueOrThrow({
           where: { id: inventory.id },
@@ -85,9 +103,12 @@ export class InventoryService {
         });
 
         // If non-stackable cosmetic and already owned, keep at 1
-        let newQty = lockedInv.quantity + quantity;
-        if (!lockedInv.item.isStackable && newQty > 1) {
-          newQty = 1;
+        const newQty = lockedInv.quantity + quantity;
+        if (!lockedInv.item.isStackable && (lockedInv.quantity > 0 || quantity !== 1)) {
+          throw new ConflictException({
+            code: EconomyErrorCodes.ITEM_ALREADY_OWNED,
+            message: 'A non-stackable item cannot be granted more than once.',
+          });
         }
 
         // Step 3: Insert inventory ledger entry
@@ -99,8 +120,9 @@ export class InventoryService {
             quantity,
             quantityAfter: newQty,
             sourceType,
-            sourceId: sourceId || null,
+            sourceId: normalizedSourceId,
             idempotencyKey,
+            requestFingerprint,
             metadata: metadata ? JSON.parse(JSON.stringify(metadata)) : undefined,
           },
         });
@@ -124,6 +146,15 @@ export class InventoryService {
           where: { userId_idempotencyKey: { userId, idempotencyKey } },
         });
         if (saved) {
+          this.assertInventoryReplayMatches(
+            saved,
+            itemId,
+            'GRANT',
+            quantity,
+            sourceType,
+            normalizedSourceId,
+            requestFingerprint,
+          );
           const inv = await this.prisma.userInventory.findUnique({
             where: { userId_itemId: { userId, itemId } },
             include: { item: true },
@@ -162,6 +193,7 @@ export class InventoryService {
     }
 
     const idempotencyKey = `consume:${userId}:${clientTransactionId}`;
+    const requestFingerprint = hashEconomyRequest(userId, 'CONSUME:v1', { itemId });
     const now = Date.now();
 
     try {
@@ -172,6 +204,17 @@ export class InventoryService {
         });
 
         if (existingEntry) {
+          this.assertInventoryReplayMatches(
+            existingEntry,
+            itemId,
+            'CONSUME',
+            1,
+            'CONSUMABLE_USE',
+            item.slug,
+            requestFingerprint,
+          );
+          const cachedResponse = (existingEntry.metadata as any)?.responsePayload;
+          if (cachedResponse) return cachedResponse;
           const companionState = await tx.companionCareState.findUnique({ where: { userId } });
           const inv = await tx.userInventory.findUnique({
             where: { userId_itemId: { userId, itemId } },
@@ -183,6 +226,8 @@ export class InventoryService {
             companionState,
           };
         }
+
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${userId} FOR UPDATE`;
 
         // Step 2: Lock user inventory row
         const inv = await tx.userInventory.findUnique({
@@ -196,10 +241,7 @@ export class InventoryService {
           });
         }
 
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "user_inventories" WHERE "id" = $1 FOR UPDATE`,
-          inv.id,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "user_inventories" WHERE "id" = ${inv.id} FOR UPDATE`;
 
         const lockedInv = await tx.userInventory.findUniqueOrThrow({
           where: { id: inv.id },
@@ -230,10 +272,7 @@ export class InventoryService {
           });
         }
 
-        await tx.$queryRawUnsafe(
-          `SELECT "id" FROM "companion_care_states" WHERE "userId" = $1 FOR UPDATE`,
-          userId,
-        );
+        await tx.$queryRaw`SELECT "id" FROM "companion_care_states" WHERE "userId" = ${userId} FOR UPDATE`;
 
         const lockedCare = await tx.companionCareState.findUniqueOrThrow({
           where: { userId },
@@ -271,22 +310,7 @@ export class InventoryService {
           include: { item: true },
         });
 
-        // Step 6: Write inventory ledger entry
-        await tx.inventoryLedgerEntry.create({
-          data: {
-            userId,
-            itemId,
-            direction: 'CONSUME',
-            quantity: 1,
-            quantityAfter: newQty,
-            sourceType: 'CONSUMABLE_USE',
-            sourceId: item.slug,
-            idempotencyKey,
-            metadata: { reactionKey: result.reactionKey, clientTransactionId },
-          },
-        });
-
-        // Step 7: Update companion care state
+        // Step 6: Update companion care state
         const updatedCare = await tx.companionCareState.update({
           where: { userId },
           data: {
@@ -299,7 +323,7 @@ export class InventoryService {
           },
         });
 
-        return {
+        const response = {
           status: 'APPLIED',
           consumedItem: updatedInv,
           companionState: {
@@ -310,9 +334,44 @@ export class InventoryService {
           },
           reactionKey: result.reactionKey,
         };
+
+        // Step 7: Write the immutable inventory ledger with a deterministic replay snapshot.
+        await tx.inventoryLedgerEntry.create({
+          data: {
+            userId,
+            itemId,
+            direction: 'CONSUME',
+            quantity: 1,
+            quantityAfter: newQty,
+            sourceType: 'CONSUMABLE_USE',
+            sourceId: item.slug,
+            idempotencyKey,
+            requestFingerprint,
+            metadata: { reactionKey: result.reactionKey, clientTransactionId, responsePayload: response },
+          },
+        });
+
+        return response;
       });
     } catch (err: any) {
       if (err?.code === 'P2002' || err?.message?.includes('23505')) {
+        const saved = await this.prisma.inventoryLedgerEntry.findUnique({
+          where: { userId_idempotencyKey: { userId, idempotencyKey } },
+        });
+        if (!saved) {
+          throw err;
+        }
+        this.assertInventoryReplayMatches(
+          saved,
+          itemId,
+          'CONSUME',
+          1,
+          'CONSUMABLE_USE',
+          item.slug,
+          requestFingerprint,
+        );
+        const recoveredResponse = (saved.metadata as any)?.responsePayload;
+        if (recoveredResponse) return recoveredResponse;
         const inv = await this.prisma.userInventory.findUnique({
           where: { userId_itemId: { userId, itemId } },
           include: { item: true },
@@ -381,43 +440,64 @@ export class InventoryService {
    * Reconciliation audit for user inventory.
    */
   async reconcileUserInventory(userId: string) {
-    const inventories = await this.prisma.userInventory.findMany({
-      where: { userId },
-    });
-    const differences: any[] = [];
+    const rows = await this.prisma.$queryRaw<Array<{
+      itemId: string;
+      inventoryQty: number | null;
+      calculatedFromLedger: bigint | number | null;
+    }>>`
+      WITH inventory AS (
+        SELECT "itemId", "quantity" FROM "user_inventories" WHERE "userId" = ${userId}
+      ), ledger AS (
+        SELECT "itemId",
+          SUM(CASE WHEN "direction" = 'GRANT' THEN "quantity" ELSE -"quantity" END)::bigint AS quantity
+        FROM "inventory_ledger_entries"
+        WHERE "userId" = ${userId}
+        GROUP BY "itemId"
+      )
+      SELECT COALESCE(i."itemId", l."itemId") AS "itemId",
+        i."quantity" AS "inventoryQty", l.quantity AS "calculatedFromLedger"
+      FROM inventory i
+      FULL OUTER JOIN ledger l ON i."itemId" = l."itemId"
+      WHERE i."itemId" IS NULL
+         OR l."itemId" IS NULL
+         OR i."quantity" <> l.quantity
+    `;
 
-    for (const inv of inventories) {
-      const grants = await this.prisma.inventoryLedgerEntry.aggregate({
-        where: { userId, itemId: inv.itemId, direction: 'GRANT' },
-        _sum: { quantity: true },
-      });
-      const consumes = await this.prisma.inventoryLedgerEntry.aggregate({
-        where: { userId, itemId: inv.itemId, direction: 'CONSUME' },
-        _sum: { quantity: true },
-      });
-      const revokes = await this.prisma.inventoryLedgerEntry.aggregate({
-        where: { userId, itemId: inv.itemId, direction: 'REVOKE' },
-        _sum: { quantity: true },
-      });
-
-      const totalGrants = grants._sum.quantity ?? 0;
-      const totalConsumes = consumes._sum.quantity ?? 0;
-      const totalRevokes = revokes._sum.quantity ?? 0;
-      const calculatedQty = totalGrants - totalConsumes - totalRevokes;
-
-      // Note: for non-stackable items, quantity is capped at 1
-      if (calculatedQty !== inv.quantity && calculatedQty < 0) {
-        differences.push({
-          itemId: inv.itemId,
-          inventoryQty: inv.quantity,
-          calculatedFromLedger: calculatedQty,
-        });
-      }
-    }
+    const differences = rows.map((row) => ({
+      itemId: row.itemId,
+      inventoryQty: row.inventoryQty,
+      calculatedFromLedger: row.calculatedFromLedger?.toString() ?? '0',
+    }));
 
     return {
       isReconciled: differences.length === 0,
       differences,
     };
+  }
+
+  private assertInventoryReplayMatches(
+    entry: any,
+    itemId: string,
+    direction: 'GRANT' | 'CONSUME',
+    quantity: number,
+    sourceType: string,
+    sourceId: string | null,
+    requestFingerprint: string,
+  ) {
+    const legacyFingerprint =
+      `legacy-inventory:${direction}:${itemId}:${quantity}:${sourceType}:${sourceId ?? ''}`;
+    if (
+      entry.itemId !== itemId ||
+      entry.direction !== direction ||
+      entry.quantity !== quantity ||
+      entry.sourceType !== sourceType ||
+      entry.sourceId !== sourceId ||
+      (entry.requestFingerprint !== requestFingerprint && entry.requestFingerprint !== legacyFingerprint)
+    ) {
+      throw new ConflictException({
+        code: EconomyErrorCodes.IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST,
+        message: 'Idempotency key reused with different request parameters.',
+      });
+    }
   }
 }

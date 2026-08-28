@@ -108,6 +108,7 @@ model User {
   inventoryLedger   InventoryLedgerEntry[]
   shopPurchases     ShopPurchase[]
   equippedCosmetics EquippedCosmetic[]
+  cosmeticActions   CosmeticActionRecord[]
 
   @@map("users")
 }
@@ -200,6 +201,7 @@ model Character {
   updatedAt         DateTime        @updatedAt
 
   profiles          PlayerProfile[]
+  cosmeticVariants CosmeticVariant[]
 
   @@map("characters")
 }
@@ -308,8 +310,27 @@ model ItemDefinition {
   shopOffers        ShopOffer[]
   equippedBy        EquippedCosmetic[]
   purchases         ShopPurchase[]
+  inventoryLedger   InventoryLedgerEntry[]
+  cosmeticActions   CosmeticActionRecord[]
+  cosmeticVariants CosmeticVariant[]
 
   @@map("item_definitions")
+}
+
+model CosmeticVariant {
+  id          String         @id @default(uuid())
+  itemId      String
+  characterId String
+  assetKey    String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  item        ItemDefinition @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  character   Character      @relation(fields: [characterId], references: [id], onDelete: Restrict)
+
+  @@unique([itemId, characterId])
+  @@index([characterId])
+  @@map("cosmetic_variants")
 }
 
 model UserInventory {
@@ -338,10 +359,12 @@ model InventoryLedgerEntry {
   sourceType         String
   sourceId           String?
   idempotencyKey     String
+  requestFingerprint String
   metadata           Json?
   createdAt          DateTime                 @default(now())
 
   user               User                     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  item               ItemDefinition            @relation(fields: [itemId], references: [id], onDelete: Restrict)
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -382,6 +405,8 @@ model ShopPurchase {
   priceAmount        BigInt
   clientTransactionId String
   requestFingerprint String
+  balanceAfter       BigInt
+  quantityAfter      Int
   createdAt          DateTime           @default(now())
 
   user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
@@ -406,4 +431,23 @@ model EquippedCosmetic {
   @@unique([userId, slot])
   @@index([userId])
   @@map("equipped_cosmetics")
+}
+
+model CosmeticActionRecord {
+  id                  String         @id @default(uuid())
+  userId              String
+  clientTransactionId String
+  requestFingerprint  String
+  operation           String
+  itemId              String?
+  slot                CosmeticSlot
+  responsePayload     Json
+  createdAt           DateTime       @default(now())
+
+  user                User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  item                ItemDefinition? @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, clientTransactionId])
+  @@index([userId])
+  @@map("cosmetic_action_records")
 }

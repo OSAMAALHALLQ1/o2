@@ -81,6 +81,24 @@ describe('Phase 4: Game Core Economy Rules & Consumables Unit Tests', () => {
       const hash2 = hashEconomyRequest('usr_1', 'PURCHASE', { offerId: 'off_2' });
       assert.notEqual(hash1, hash2);
     });
+
+    it('should recursively canonicalize nested objects without omitting meaningful fields', () => {
+      const hash1 = hashEconomyRequest('usr_1', 'PURCHASE:v1', {
+        offerId: 'off_1',
+        scope: { scopeType: 'EVENT', scopeId: 'summer-2026' },
+      });
+      const reordered = hashEconomyRequest('usr_1', 'PURCHASE:v1', {
+        scope: { scopeId: 'summer-2026', scopeType: 'EVENT' },
+        offerId: 'off_1',
+      });
+      const changed = hashEconomyRequest('usr_1', 'PURCHASE:v1', {
+        offerId: 'off_1',
+        scope: { scopeType: 'EVENT', scopeId: 'winter-2026' },
+      });
+
+      assert.equal(hash1, reordered);
+      assert.notEqual(hash1, changed);
+    });
   });
 
   describe('4. Consumable Item Simulation Integration', () => {

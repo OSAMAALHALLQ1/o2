@@ -81,13 +81,26 @@ export function hashEconomyRequest(
   operation: string,
   payload: Record<string, unknown>,
 ): string {
-  const sortedPayload = Object.keys(payload)
-    .sort()
-    .reduce<Record<string, unknown>>((acc, key) => {
-      acc[key] = payload[key];
-      return acc;
-    }, {});
-
-  const data = `${userId}:${operation}:${JSON.stringify(sortedPayload)}`;
+  const data = `${operation}:${userId}:${canonicalJson(payload)}`;
   return createHash('sha256').update(data, 'utf8').digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new TypeError('Economy request fingerprints do not support undefined or non-JSON values.');
+    }
+    return serialized;
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  }
+
+  const objectValue = value as Record<string, unknown>;
+  const entries = Object.keys(objectValue)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(objectValue[key])}`);
+  return `{${entries.join(',')}}`;
 }

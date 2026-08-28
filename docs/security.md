@@ -115,3 +115,11 @@ graph LR
 * **Reporting System:** Captures room context, recent chat snippets, and match IDs.
 * **Moderation Actions:** Mute, Matchmaking Suspension, and Account Ban enforced via NestJS Auth Guards.
 * **Audit Logging:** Every administrative action is written to the immutable `AuditLog` table with IP, previous state, and new state.
+
+---
+
+## 6. Phase 4 Economy Audit Retention and Account Deletion
+
+Currency ledger entries, inventory ledger entries, shop purchases, and cosmetic action records are append-only records. PostgreSQL rejects application-level `UPDATE` and `DELETE` operations on these tables, and their user foreign keys use `ON DELETE RESTRICT`. A normal user deletion must therefore never cascade away authoritative economy history.
+
+A future account-deletion workflow must run as a privileged, separately audited anonymization process: revoke sessions and remove direct profile/authentication data, replace identifying attributes with a stable pseudonymous audit subject, and retain the minimum economy history required for reconciliation and abuse/fraud investigation. Hard deletion of the retained audit subject is not permitted while authoritative history references it. The exact retention period and legal erasure policy must be approved before that workflow is implemented.

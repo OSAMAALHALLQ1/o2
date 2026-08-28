@@ -541,6 +541,17 @@ export async function seedPhase4Catalog() {
       create: itemData,
     });
 
+    if (item.type === 'COSMETIC') {
+      const characters = await prisma.character.findMany({ select: { id: true } });
+      for (const character of characters) {
+        await prisma.cosmeticVariant.upsert({
+          where: { itemId_characterId: { itemId: createdItem.id, characterId: character.id } },
+          update: { assetKey: item.assetKey },
+          create: { itemId: createdItem.id, characterId: character.id, assetKey: item.assetKey },
+        });
+      }
+    }
+
     if (offer) {
       await prisma.shopOffer.upsert({
         where: { slug: offer.slug },
