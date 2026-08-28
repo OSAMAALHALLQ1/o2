@@ -59,6 +59,7 @@ export default function TabLayout() {
           tabBarIcon: () => <Text style={{ fontSize: 20 }}>👤</Text>,
         }}
       />
+      <Tabs.Screen name="social" options={{ href: null }} />
     </Tabs>
   );
 }

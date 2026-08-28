@@ -8,9 +8,10 @@ import { EconomyController } from './economy.controller';
 import { ShopController } from './shop.controller';
 import { InventoryController } from './inventory.controller';
 import { CosmeticsController } from './cosmetics.controller';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, AuthModule],
   controllers: [
     EconomyController,
     ShopController,

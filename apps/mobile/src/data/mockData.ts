@@ -131,6 +131,10 @@ export const mockParty: PartySummaryDto = {
   roomCode: 'O2-7788',
   leaderId: 'usr_mock_001',
   selectedGameSlug: 'atrash',
+  desiredGameMode: 'ATRASH',
+  capacity: 5,
+  allowJoinByCode: false,
+  version: 1,
   members: [
     {
       userId: 'usr_mock_001',
@@ -139,6 +143,8 @@ export const mockParty: PartySummaryDto = {
       characterSlug: 'panda_mascot',
       isLeader: true,
       isReady: true,
+      readyState: 'READY',
+      joinedAt: '2026-08-28T10:00:00.000Z',
     },
     {
       userId: 'usr_mock_002',
@@ -147,6 +153,8 @@ export const mockParty: PartySummaryDto = {
       characterSlug: 'koala_mascot',
       isLeader: false,
       isReady: true,
+      readyState: 'READY',
+      joinedAt: '2026-08-28T10:01:00.000Z',
     },
     {
       userId: 'usr_mock_003',
@@ -155,6 +163,8 @@ export const mockParty: PartySummaryDto = {
       characterSlug: 'fox_mascot',
       isLeader: false,
       isReady: false,
+      readyState: 'NOT_READY',
+      joinedAt: '2026-08-28T10:02:00.000Z',
     },
   ],
 };

@@ -6,6 +6,7 @@ import { DirectionProvider, ToastProvider, colors } from '@o2/ui';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { CompanionProvider } from '../src/context/CompanionContext';
 import { EconomyProvider } from '../src/context/EconomyContext';
+import { SocialProvider } from '../src/context/SocialContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -58,8 +59,10 @@ export default function RootLayout() {
         <AuthProvider>
           <CompanionProvider>
             <EconomyProvider>
-              <StatusBar style="light" />
-              <RootNavigation />
+              <SocialProvider>
+                <StatusBar style="light" />
+                <RootNavigation />
+              </SocialProvider>
             </EconomyProvider>
           </CompanionProvider>
         </AuthProvider>

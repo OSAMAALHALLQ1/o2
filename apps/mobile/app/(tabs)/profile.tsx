@@ -1,4 +1,5 @@
 import React from 'react';
+import { Href, useRouter } from 'expo-router';
 import { View, Text, StyleSheet, Alert } from 'react-native';
 import {
   ScreenContainer,
@@ -15,6 +16,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { mockProfile, mockCompanion } from '../../src/data/mockData';
 
 export default function ProfileScreen() {
+  const router = useRouter();
   const { showToast } = useToast();
   const { profile, logout, isLoading } = useAuth();
 
@@ -104,7 +106,7 @@ export default function ProfileScreen() {
         <View style={styles.navEntriesList}>
           <Card
             style={styles.entryCard}
-            onPress={() => handleAction('قائمة الأصدقاء')}
+            onPress={() => router.push('/(tabs)/social' as Href)}
           >
             <Text style={styles.entryIcon}>👥</Text>
             <Text style={styles.entryTitle}>قائمة الأصدقاء والطلبات المعلقة</Text>
