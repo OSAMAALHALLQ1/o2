@@ -465,4 +465,206 @@ describe('Phase 6D: Realtime Disconnect, Reconnect & State Recovery', () => {
       );
     });
   });
+
+  describe('8. Focused Reconnect Race Safety Suite (Prompt Requirements 1-5)', () => {
+    it('1. Duplicate Reconnect Race: concurrent recovery maintains single membership and unchanged version', async () => {
+      const roomManager = new RoomManager();
+      const host = { userId: 'host_race_1', username: 'Host1' };
+      const created = await roomManager.createRoom(host, ROOM_GAME_MODES.ATRASH);
+      const player = { userId: 'player_race_1', username: 'Player1' };
+      await roomManager.joinRoom(created.roomId, player);
+
+      const room = roomManager.getRoom(created.roomId)!;
+      // Player disconnects -> DISCONNECTED_GRACE
+      roomManager.handleParticipantDisconnect(player.userId);
+      assert.strictEqual(room.getParticipant(player.userId)?.status, 'DISCONNECTED_GRACE');
+      assert.strictEqual(room.timers.has(`grace_${player.userId}`), true);
+      const versionBeforeRecovery = room.version;
+
+      // Two concurrent recovery flows
+      const [proj1, proj2] = await Promise.all([
+        roomManager.recoverRoom(player.userId),
+        roomManager.recoverRoom(player.userId),
+      ]);
+
+      // Exactly one logical room membership remains
+      assert.strictEqual(room.hasParticipant(player.userId), true);
+      assert.strictEqual(room.participantCount, 2);
+      assert.strictEqual(room.getParticipant(player.userId)?.status, 'CONNECTED');
+
+      // Grace timer cancelled safely
+      assert.strictEqual(room.timers.has(`grace_${player.userId}`), false);
+
+      // No duplicate participant in projection
+      const matching = room.getPublicProjection().participants.filter((p) => p.userId === player.userId);
+      assert.strictEqual(matching.length, 1);
+
+      // Returned projections remain consistent
+      assert.deepStrictEqual(proj1, proj2);
+
+      // Room version remains unchanged by recovery itself
+      assert.strictEqual(room.version, versionBeforeRecovery, 'Room version must remain unchanged by recovery');
+    });
+
+    it('2. Reconnect vs Kick: deterministic outcomes with no zombie membership', async () => {
+      // 2A: Kick commits first -> recovery must fail as NOT_ROOM_MEMBER or ROOM_UNAVAILABLE
+      const rmA = new RoomManager();
+      const hostA = { userId: 'host_kick_A', username: 'HostA' };
+      const roomA = await rmA.createRoom(hostA, ROOM_GAME_MODES.ATRASH);
+      const playerA = { userId: 'player_kick_A', username: 'PlayerA' };
+      await rmA.joinRoom(roomA.roomId, playerA);
+      rmA.handleParticipantDisconnect(playerA.userId);
+
+      // Kick commits first, then recover runs
+      await rmA.kickParticipant(roomA.roomId, playerA.userId);
+
+      await assert.rejects(
+        async () => {
+          await rmA.recoverRoom(playerA.userId);
+        },
+        (err: any) => {
+          assert.ok(
+            err.code === RoomErrorCodes.NOT_ROOM_MEMBER || err.code === RoomErrorCodes.ROOM_UNAVAILABLE,
+            `Expected NOT_ROOM_MEMBER or ROOM_UNAVAILABLE, got ${err.code}`,
+          );
+          return true;
+        },
+      );
+      assert.strictEqual(rmA.getRoom(roomA.roomId)?.hasParticipant(playerA.userId), false);
+
+      // 2B: Recovery commits first -> kick still removes user cleanly
+      const rmB = new RoomManager();
+      const hostB = { userId: 'host_kick_B', username: 'HostB' };
+      const roomB = await rmB.createRoom(hostB, ROOM_GAME_MODES.ATRASH);
+      const playerB = { userId: 'player_kick_B', username: 'PlayerB' };
+      await rmB.joinRoom(roomB.roomId, playerB);
+      rmB.handleParticipantDisconnect(playerB.userId);
+
+      // Concurrent recover and kick
+      const recoverPromise = rmB.recoverRoom(playerB.userId);
+      const kickPromise = rmB.kickParticipant(roomB.roomId, playerB.userId);
+
+      const [recResult, kickResult] = await Promise.allSettled([recoverPromise, kickPromise]);
+      assert.ok(recResult.status === 'fulfilled' || kickResult.status === 'fulfilled');
+
+      // In all cases, user MUST NOT remain in the room after kick executes
+      const finalRoomB = rmB.getRoom(roomB.roomId)!;
+      assert.strictEqual(finalRoomB.hasParticipant(playerB.userId), false, 'No zombie membership after kick');
+      assert.strictEqual(rmB.getUserRoom(playerB.userId), undefined);
+    });
+
+    it('3. Reconnect vs Leave: user is either validly recovered or validly removed, never both', async () => {
+      const roomManager = new RoomManager();
+      const host = { userId: 'host_leave_1', username: 'Host1' };
+      const room = await roomManager.createRoom(host, ROOM_GAME_MODES.ATRASH);
+      const player = { userId: 'player_leave_1', username: 'Player1' };
+      await roomManager.joinRoom(room.roomId, player);
+      roomManager.handleParticipantDisconnect(player.userId);
+
+      // Concurrent recover and leave
+      const [recSettled, leaveSettled] = await Promise.allSettled([
+        roomManager.recoverRoom(player.userId),
+        roomManager.leaveRoom(room.roomId, player.userId),
+      ]);
+
+      const finalRoom = roomManager.getRoom(room.roomId)!;
+      const userStillInRoom = finalRoom.hasParticipant(player.userId);
+
+      // Final state: either validly recovered OR validly removed
+      if (userStillInRoom) {
+        assert.strictEqual(recSettled.status, 'fulfilled');
+        assert.strictEqual(leaveSettled.status, 'rejected');
+      } else {
+        assert.strictEqual(leaveSettled.status, 'fulfilled');
+        assert.strictEqual(finalRoom.hasParticipant(player.userId), false);
+      }
+
+      // No duplicate participant in the room
+      const count = finalRoom.getPublicProjection().participants.filter((p) => p.userId === player.userId).length;
+      assert.ok(count <= 1, 'Never duplicate participants');
+    });
+
+    it('4. Duplicate Subscription: duplicate recovery requests produce zero duplicate subscriptions or duplicate deliveries', () => {
+      const server = new MockRealtimeServer();
+      const partyManager = new PartyRealtimeManager(server);
+      const userId = 'user_sub_test';
+      const partyId = 'party_sub_test';
+
+      // Send subscription / recovery twice
+      partyManager.subscribe(userId, partyId);
+      partyManager.subscribe(userId, partyId);
+
+      // Exactly 1 subscription tracked
+      assert.strictEqual(partyManager.getSubscriberCount(partyId), 1);
+      assert.strictEqual(partyManager.isSubscribed(userId, partyId), true);
+
+      // Connect two devices for the user
+      const conn1 = new MockRealtimeConnection(userId, 'conn_sub_1');
+      const conn2 = new MockRealtimeConnection(userId, 'conn_sub_2');
+      server.registerConnection(conn1);
+      server.registerConnection(conn2);
+
+      // Publish event to party
+      partyManager.publishPartyEvent(
+        partyId,
+        'PARTY_STATE_UPDATED',
+        {
+          id: partyId,
+          leaderId: userId,
+          gameMode: 'ATRASH',
+          status: 'FORMING',
+          version: 2,
+          members: [{ userId, username: 'sub_test', role: 'LEADER', isReady: true, joinedAt: Date.now() }],
+        },
+      );
+
+      // Exactly one delivery per physical socket connection (no duplicated deliveries caused by duplicate subscription)
+      assert.strictEqual(conn1.sentEvents.length, 1);
+      assert.strictEqual(conn2.sentEvents.length, 1);
+    });
+
+    it('5. Action Retry after Reconnect: action executes once, returns cached result, increments version once', async () => {
+      const room = new Room('room_retry_flow', ROOM_GAME_MODES.ATRASH, 'host_user', undefined, 4);
+      room.setState('WAITING');
+      room.addParticipant({
+        userId: 'player_act',
+        username: 'playerAct',
+        joinedAt: Date.now(),
+        isReady: false,
+      });
+
+      const initialVersion = room.version;
+      const action = {
+        actionId: 'act_retry_lost_response_101',
+        roomId: 'room_retry_flow',
+        userId: 'player_act',
+        type: 'SET_READY',
+        payload: { isReady: true },
+        receivedAt: Date.now(),
+      };
+
+      // 1. Submit action before disconnect -> server processes action
+      const firstResult = await room.dispatchAction(action) as any;
+      const versionAfterAction = room.version;
+      assert.strictEqual(versionAfterAction, initialVersion + 1, 'Version increments on first execution');
+      assert.strictEqual(firstResult.isReady, true);
+
+      // 2. Simulate: response lost over network, socket disconnects
+      room.handleParticipantDisconnect('player_act');
+
+      // 3. Reconnect occurs
+      room.recoverParticipant('player_act');
+      assert.strictEqual(room.getParticipant('player_act')?.status, 'CONNECTED');
+
+      // 4. Same actionId submitted again after reconnect
+      const versionBeforeRetry = room.version;
+      const retryResult = await room.dispatchAction(action);
+
+      // Exact cached result returned
+      assert.deepStrictEqual(retryResult, firstResult);
+
+      // Room version did NOT increment again
+      assert.strictEqual(room.version, versionBeforeRetry, 'Version must not increment on action retry');
+    });
+  });
 });

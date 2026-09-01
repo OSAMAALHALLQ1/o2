@@ -583,9 +583,10 @@ export class Room {
     // Cancel pending grace timer
     this.timers.cancel(`grace_${userId}`);
 
-    participant.status = 'CONNECTED';
-    this._version += 1;
-    this._updatedAt = Date.now();
+    if (participant.status !== 'CONNECTED') {
+      participant.status = 'CONNECTED';
+      this._updatedAt = Date.now();
+    }
 
     return this.getPlayerProjection(userId);
   }
@@ -821,6 +822,35 @@ export class RoomManager {
       }
 
       return { left: true, roomClosed };
+    });
+  }
+
+  async kickParticipant(
+    roomId: string,
+    targetUserId: string,
+  ): Promise<{ kicked: boolean }> {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw new RoomError(RoomErrorCodes.ROOM_NOT_FOUND, 'الغرفة غير موجودة');
+    }
+
+    return room.executor.execute(async () => {
+      const removed = room.removeParticipant(targetUserId);
+      this.userToRoomId.delete(targetUserId);
+
+      this.broadcastToRoom(
+        roomId,
+        RoomSystemEvents.PLAYER_LEFT,
+        {
+          leftUser: {
+            userId: removed.userId,
+            username: removed.username,
+          },
+          roomProjection: room.getPublicProjection(),
+        },
+      );
+
+      return { kicked: true };
     });
   }
 
