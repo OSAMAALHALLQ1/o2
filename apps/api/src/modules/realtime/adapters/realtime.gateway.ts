@@ -10,6 +10,7 @@ import { Server, Socket } from 'socket.io';
 import { REALTIME_PROTOCOL_VERSION, RealtimeSystemEvents } from '@o2/types';
 import { RealtimeAuthError, RealtimeAuthService } from '../services/realtime-auth.service';
 import { RealtimeServerService } from '../services/realtime-server.service';
+import { RoomManagerService } from '../rooms/room-manager.service';
 import { SocketIoRealtimeConnection } from './socket-io.adapter';
 import { REALTIME_CONSTANTS } from '../realtime.constants';
 
@@ -26,6 +27,7 @@ export class RealtimeGateway
   private readonly socketToConnection = new Map<string, string>();
   private readonly authService: RealtimeAuthService;
   private readonly realtimeServer: RealtimeServerService;
+  private readonly roomManager: RoomManagerService;
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
   @WebSocketServer()
@@ -34,9 +36,11 @@ export class RealtimeGateway
   constructor(
     authService: RealtimeAuthService,
     realtimeServer: RealtimeServerService,
+    roomManager: RoomManagerService,
   ) {
     this.authService = authService;
     this.realtimeServer = realtimeServer;
+    this.roomManager = roomManager;
   }
 
   afterInit(): void {
@@ -44,6 +48,41 @@ export class RealtimeGateway
     this.heartbeatTimer = setInterval(() => {
       this.realtimeServer.checkHeartbeats();
     }, REALTIME_CONSTANTS.HEARTBEAT_INTERVAL_MS);
+
+    // Register generic room routes
+    this.realtimeServer.on('room:create', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      return await this.roomManager.createRoom(
+        { userId: conn.userId, username: `player_${conn.userId.slice(0, 6)}` },
+        payload.gameMode,
+        payload.customCapacity,
+      );
+    });
+
+    this.realtimeServer.on('room:join', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      return await this.roomManager.joinRoom(payload.roomId, {
+        userId: conn.userId,
+        username: `player_${conn.userId.slice(0, 6)}`,
+      });
+    });
+
+    this.realtimeServer.on('room:leave', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      return await this.roomManager.leaveRoom(payload.roomId, conn.userId);
+    });
+
+    this.realtimeServer.on('room:action', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      return await this.roomManager.dispatchAction(payload.roomId, {
+        actionId: payload.actionId || envelope.requestId,
+        roomId: payload.roomId,
+        userId: conn.userId,
+        type: payload.type,
+        payload: payload.payload,
+        receivedAt: Date.now(),
+      });
+    });
   }
 
   onModuleDestroy(): void {
