@@ -130,3 +130,34 @@ export type SocialAnalyticsEvent =
   | 'party_member_kicked'
   | 'party_ready_changed'
   | 'party_game_selected';
+
+export type PartyRealtimeEventType =
+  | 'PARTY_MEMBER_JOINED'
+  | 'PARTY_MEMBER_LEFT'
+  | 'PARTY_MEMBER_KICKED'
+  | 'PARTY_LEADER_CHANGED'
+  | 'PARTY_READY_CHANGED'
+  | 'PARTY_GAME_CHANGED'
+  | 'PARTY_INVITE_UPDATED'
+  | 'PARTY_STATE_UPDATED';
+
+export interface PartyRealtimeSnapshot {
+  partyId: string;
+  version: number;
+  roomCode: string;
+  leaderId: string;
+  desiredGameMode: PartyGameMode | null;
+  capacity: number;
+  allowJoinByCode: boolean;
+  members: PartyMemberDto[];
+  updatedAt: number;
+}
+
+export interface PartyRealtimeEventPayload<TDetails = Record<string, unknown>> {
+  partyId: string;
+  version: number;
+  type: PartyRealtimeEventType;
+  snapshot: PartyRealtimeSnapshot;
+  details?: TDetails;
+  occurredAt: number;
+}

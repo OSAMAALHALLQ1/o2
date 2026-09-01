@@ -11,6 +11,7 @@ import { REALTIME_PROTOCOL_VERSION, RealtimeSystemEvents } from '@o2/types';
 import { RealtimeAuthError, RealtimeAuthService } from '../services/realtime-auth.service';
 import { RealtimeServerService } from '../services/realtime-server.service';
 import { RoomManagerService } from '../rooms/room-manager.service';
+import { PartyRealtimeService } from '../party/party-realtime.service';
 import { SocketIoRealtimeConnection } from './socket-io.adapter';
 import { REALTIME_CONSTANTS } from '../realtime.constants';
 
@@ -18,6 +19,7 @@ import { REALTIME_CONSTANTS } from '../realtime.constants';
 @WebSocketGateway({
   cors: {
     origin: '*',
+    credentials: true,
   },
 })
 export class RealtimeGateway
@@ -28,6 +30,7 @@ export class RealtimeGateway
   private readonly authService: RealtimeAuthService;
   private readonly realtimeServer: RealtimeServerService;
   private readonly roomManager: RoomManagerService;
+  private readonly partyRealtime: PartyRealtimeService;
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
   @WebSocketServer()
@@ -37,10 +40,12 @@ export class RealtimeGateway
     authService: RealtimeAuthService,
     realtimeServer: RealtimeServerService,
     roomManager: RoomManagerService,
+    partyRealtime: PartyRealtimeService,
   ) {
     this.authService = authService;
     this.realtimeServer = realtimeServer;
     this.roomManager = roomManager;
+    this.partyRealtime = partyRealtime;
   }
 
   afterInit(): void {
@@ -82,6 +87,23 @@ export class RealtimeGateway
         payload: payload.payload,
         receivedAt: Date.now(),
       });
+    });
+
+    // Register party subscription routes (Phase 6C)
+    this.realtimeServer.on('party:subscribe', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      const partyId = payload.partyId;
+      if (!partyId) return { subscribed: false, reason: 'MISSING_PARTY_ID' };
+      this.partyRealtime.subscribe(conn.userId, partyId);
+      return { subscribed: true, partyId };
+    });
+
+    this.realtimeServer.on('party:unsubscribe', async (conn, envelope) => {
+      const payload = (envelope.payload as any) || {};
+      const partyId = payload.partyId;
+      if (!partyId) return { unsubscribed: false };
+      this.partyRealtime.unsubscribe(conn.userId, partyId);
+      return { unsubscribed: true, partyId };
     });
   }
 

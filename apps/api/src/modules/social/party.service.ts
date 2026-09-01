@@ -1,20 +1,53 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { PartyGameMode, PartyInviteDto, PartySummaryDto, PARTY_INVITE_EXPIRY_MINUTES } from '@o2/types';
+import {
+  PartyGameMode,
+  PartyInviteDto,
+  PartySummaryDto,
+  PARTY_INVITE_EXPIRY_MINUTES,
+  PartyRealtimeEventType,
+  PartyRealtimeSnapshot,
+} from '@o2/types';
 import { canonicalUserPair, generatePartyCode, getPartyCapacity } from '@o2/game-core';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PartyRealtimeService } from '../realtime/party/party-realtime.service';
 import { SocialErrorCodes } from './social.constants';
 
 type Tx = Prisma.TransactionClient;
 
 @Injectable()
 export class PartyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly partyRealtime?: PartyRealtimeService,
+  ) {}
+
+  private emitPartyEvent(
+    partyId: string,
+    type: PartyRealtimeEventType,
+    summary: PartySummaryDto,
+    details?: Record<string, unknown>,
+    explicitRecipients?: string[],
+  ): void {
+    if (!this.partyRealtime) return;
+    const snapshot: PartyRealtimeSnapshot = {
+      partyId: summary.partyId,
+      version: summary.version,
+      roomCode: summary.roomCode,
+      leaderId: summary.leaderId,
+      desiredGameMode: summary.desiredGameMode,
+      capacity: summary.capacity,
+      allowJoinByCode: summary.allowJoinByCode,
+      members: summary.members,
+      updatedAt: Date.now(),
+    };
+    this.partyRealtime.publishPartyEvent(partyId, type, snapshot, details, explicitRecipients);
+  }
 
   async createParty(userId: string): Promise<PartySummaryDto> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        return await this.prisma.$transaction(async (tx) => {
+        const summary = await this.prisma.$transaction(async (tx) => {
           await this.lockUsers(tx, [userId]);
           const existing = await tx.partyMember.findUnique({ where: { userId } });
           if (existing) return this.getPartyById(tx, existing.partyId, userId);
@@ -23,6 +56,8 @@ export class PartyService {
           await tx.partyMember.create({ data: { partyId: party.id, userId } });
           return this.getPartyById(tx, party.id, userId);
         });
+        this.emitPartyEvent(summary.partyId, 'PARTY_STATE_UPDATED', summary);
+        return summary;
       } catch (error: any) {
         if (error?.code === 'P2002' && attempt < 4) continue;
         throw error;
@@ -114,6 +149,7 @@ export class PartyService {
       return this.getPartyById(tx, party.id, userId);
     });
     if (!result) throw new ConflictException({ code: SocialErrorCodes.PARTY_INVITE_EXPIRED });
+    this.emitPartyEvent(result.partyId, 'PARTY_MEMBER_JOINED', result, { joinedUserId: userId });
     return result;
   }
 
@@ -136,11 +172,13 @@ export class PartyService {
     const party = await this.prisma.party.findUnique({ where: { code: code.toUpperCase() } });
     if (!party || party.status !== 'ACTIVE') throw new NotFoundException({ code: SocialErrorCodes.PARTY_NOT_FOUND });
     if (!party.allowJoinByCode) throw new NotFoundException({ code: SocialErrorCodes.PARTY_CODE_DISABLED });
-    return this.joinOpenParty(userId, party.id);
+    const summary = await this.joinOpenParty(userId, party.id);
+    this.emitPartyEvent(summary.partyId, 'PARTY_MEMBER_JOINED', summary, { joinedUserId: userId });
+    return summary;
   }
 
   async leave(userId: string, partyId: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // A leader transfer updates the party FK to another member. Lock every
       // current member in the same global order used by other mutations so a
       // concurrent ready/leave/kick cannot form user-row -> party-row cycles.
@@ -168,11 +206,33 @@ export class PartyService {
       await tx.partyMember.delete({ where: { userId } });
       return { status: 'LEFT', party: await this.getPartyById(tx, partyId, userId) };
     });
+
+    if (result.party) {
+      this.emitPartyEvent(partyId, 'PARTY_MEMBER_LEFT', result.party, { leftUserId: userId }, [
+        ...result.party.members.map((m) => m.userId),
+        userId,
+      ]);
+    } else {
+      if (this.partyRealtime) {
+        this.partyRealtime.publishPartyEvent(partyId, 'PARTY_STATE_UPDATED', {
+          partyId,
+          version: 0,
+          roomCode: '',
+          leaderId: '',
+          desiredGameMode: null,
+          capacity: 0,
+          allowJoinByCode: false,
+          members: [],
+          updatedAt: Date.now(),
+        }, { closed: true }, [userId]);
+      }
+    }
+    return result;
   }
 
   async kick(userId: string, partyId: string, targetUserId: string) {
     if (userId === targetUserId) throw new BadRequestException({ code: SocialErrorCodes.INVALID_TARGET });
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.lockUsers(tx, [userId, targetUserId]);
       await this.lockParty(tx, partyId);
       const party = await tx.party.findUnique({ where: { id: partyId } });
@@ -186,10 +246,16 @@ export class PartyService {
       }
       return this.getPartyById(tx, partyId, userId);
     });
+
+    this.emitPartyEvent(partyId, 'PARTY_MEMBER_KICKED', summary, { kickedUserId: targetUserId }, [
+      ...summary.members.map((m) => m.userId),
+      targetUserId,
+    ]);
+    return summary;
   }
 
   async setReady(userId: string, partyId: string, readyState: 'READY' | 'NOT_READY') {
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.lockUsers(tx, [userId]);
       await this.lockParty(tx, partyId);
       const member = await tx.partyMember.findUnique({ where: { userId } });
@@ -200,10 +266,13 @@ export class PartyService {
       }
       return this.getPartyById(tx, partyId, userId);
     });
+
+    this.emitPartyEvent(partyId, 'PARTY_READY_CHANGED', summary, { userId, readyState });
+    return summary;
   }
 
   async selectGame(userId: string, partyId: string, desiredGameMode: PartyGameMode) {
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.lockUsers(tx, [userId]);
       await this.lockParty(tx, partyId);
       const party = await tx.party.findUnique({ where: { id: partyId } });
@@ -217,10 +286,13 @@ export class PartyService {
       await tx.party.update({ where: { id: partyId }, data: { desiredGameMode, version: { increment: 1 } } });
       return this.getPartyById(tx, partyId, userId);
     });
+
+    this.emitPartyEvent(partyId, 'PARTY_GAME_CHANGED', summary, { desiredGameMode });
+    return summary;
   }
 
   async setCodeAccess(userId: string, partyId: string, allowJoinByCode: boolean) {
-    return this.prisma.$transaction(async (tx) => {
+    const summary = await this.prisma.$transaction(async (tx) => {
       await this.lockUsers(tx, [userId]);
       await this.lockParty(tx, partyId);
       const party = await tx.party.findUnique({ where: { id: partyId } });
@@ -229,6 +301,9 @@ export class PartyService {
       await tx.party.update({ where: { id: partyId }, data: { allowJoinByCode, version: { increment: 1 } } });
       return this.getPartyById(tx, partyId, userId);
     });
+
+    this.emitPartyEvent(partyId, 'PARTY_STATE_UPDATED', summary, { allowJoinByCode });
+    return summary;
   }
 
   async separateBlockedUsers(tx: Tx, blockerId: string, blockedId: string) {

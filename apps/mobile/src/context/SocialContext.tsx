@@ -1,10 +1,13 @@
-import React, { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   FriendRequestDto, PartyGameMode, PartyInviteDto, PartyReadyState,
-  PartySummaryDto, PublicPlayerSummaryDto, SocialPrivacyDto,
+  PartyRealtimeEventPayload, PartySummaryDto, PartySystemEvents,
+  PublicPlayerSummaryDto, SocialPrivacyDto,
 } from '@o2/types';
 import { SocialApi } from '../api/social';
 import { useAuth } from './AuthContext';
+import { AuthTokenStorage } from '../storage/auth-storage';
+import { getSharedRealtimeClient } from '../realtime';
 
 interface SocialContextValue {
   friends: PublicPlayerSummaryDto[];
@@ -40,7 +43,7 @@ interface SocialContextValue {
 const SocialContext = createContext<SocialContextValue | undefined>(undefined);
 
 export function SocialProvider({ children }: { children: ReactNode }) {
-  const { authState } = useAuth();
+  const { authState, user } = useAuth();
   const [friends, setFriends] = useState<PublicPlayerSummaryDto[]>([]);
   const [incomingRequests, setIncomingRequests] = useState<FriendRequestDto[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<FriendRequestDto[]>([]);
@@ -49,6 +52,9 @@ export function SocialProvider({ children }: { children: ReactNode }) {
   const [party, setParty] = useState<PartySummaryDto | null>(null);
   const [partyInvites, setPartyInvites] = useState<PartyInviteDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+
+  const partyRef = useRef<PartySummaryDto | null>(null);
+  partyRef.current = party;
 
   const refreshSocial = useCallback(async () => {
     if (authState !== 'authenticated') return;
@@ -71,6 +77,124 @@ export function SocialProvider({ children }: { children: ReactNode }) {
   }, [authState]);
 
   useEffect(() => { void refreshSocial(); }, [refreshSocial]);
+
+  // Phase 6C: Realtime Party Synchronization
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+
+    const realtimeClient = getSharedRealtimeClient();
+
+    // Connect realtime transport if not already connected
+    const connectRealtime = async () => {
+      try {
+        const token = await AuthTokenStorage.getAccessToken();
+        if (token && realtimeClient.getConnectionState() === 'DISCONNECTED') {
+          await realtimeClient.connect(token);
+        }
+      } catch {
+        // Realtime is an enhancement; HTTP fallback remains active
+      }
+    };
+    void connectRealtime();
+
+    // Listen to authoritative party events
+    const unsubscribeEvent = realtimeClient.on(PartySystemEvents.EVENT, (envelope) => {
+      const payload = envelope.payload as PartyRealtimeEventPayload;
+      if (!payload || !payload.partyId) return;
+
+      const currentParty = partyRef.current;
+      const myUserId = user?.id;
+
+      // Check if this event targets or affects the current party
+      if (currentParty && currentParty.partyId === payload.partyId) {
+        // If current user is removed or kicked
+        const isStillMember = myUserId
+          ? payload.snapshot.members.some((m) => m.userId === myUserId)
+          : true;
+
+        if (!isStillMember || payload.type === 'PARTY_MEMBER_KICKED' && payload.details?.kickedUserId === myUserId) {
+          setParty(null);
+          realtimeClient.send(PartySystemEvents.UNSUBSCRIBE, { partyId: payload.partyId }).catch(() => {});
+          return;
+        }
+
+        // Version ordering validation
+        const currentVersion = currentParty.version;
+        const incomingVersion = payload.version;
+
+        if (incomingVersion < currentVersion) {
+          // Stale event -> ignore
+          return;
+        }
+
+        if (incomingVersion === currentVersion) {
+          // Duplicate event -> ignore
+          return;
+        }
+
+        if (incomingVersion === currentVersion + 1) {
+          // Sequential authoritative update -> apply directly
+          setParty({
+            partyId: payload.snapshot.partyId,
+            roomCode: payload.snapshot.roomCode,
+            leaderId: payload.snapshot.leaderId,
+            desiredGameMode: payload.snapshot.desiredGameMode,
+            capacity: payload.snapshot.capacity,
+            allowJoinByCode: payload.snapshot.allowJoinByCode,
+            version: payload.snapshot.version,
+            members: payload.snapshot.members,
+          });
+          return;
+        }
+
+        if (incomingVersion > currentVersion + 1) {
+          // Version gap detected -> authoritative HTTP reconciliation
+          void refreshSocial();
+          return;
+        }
+      } else if (!currentParty && payload.snapshot) {
+        // Joined a party while not locally in one
+        const isMember = myUserId
+          ? payload.snapshot.members.some((m) => m.userId === myUserId)
+          : false;
+
+        if (isMember) {
+          setParty({
+            partyId: payload.snapshot.partyId,
+            roomCode: payload.snapshot.roomCode,
+            leaderId: payload.snapshot.leaderId,
+            desiredGameMode: payload.snapshot.desiredGameMode,
+            capacity: payload.snapshot.capacity,
+            allowJoinByCode: payload.snapshot.allowJoinByCode,
+            version: payload.snapshot.version,
+            members: payload.snapshot.members,
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeEvent();
+    };
+  }, [authState, user?.id, refreshSocial]);
+
+  // Subscribe to realtime party when party state changes
+  useEffect(() => {
+    if (!party?.partyId) return;
+
+    const realtimeClient = getSharedRealtimeClient();
+    const partyId = party.partyId;
+
+    if (realtimeClient.getConnectionState() === 'CONNECTED') {
+      realtimeClient.send(PartySystemEvents.SUBSCRIBE, { partyId }).catch(() => {});
+    }
+
+    return () => {
+      if (realtimeClient.getConnectionState() === 'CONNECTED') {
+        realtimeClient.send(PartySystemEvents.UNSUBSCRIBE, { partyId }).catch(() => {});
+      }
+    };
+  }, [party?.partyId]);
 
   const reconcile = async (mutation: () => Promise<unknown>) => {
     try { await mutation(); } finally { await refreshSocial(); }

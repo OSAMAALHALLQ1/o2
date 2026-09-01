@@ -193,3 +193,9 @@ export const RoomSystemEvents = {
   ROOM_CLOSED: 'room:closed',
   ACTION_RESULT: 'room:action_result',
 } as const;
+
+export const PartySystemEvents = {
+  SUBSCRIBE: 'party:subscribe',
+  UNSUBSCRIBE: 'party:unsubscribe',
+  EVENT: 'party:event',
+} as const;

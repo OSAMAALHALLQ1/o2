@@ -8,12 +8,13 @@ import { RealtimeServerService } from './services/realtime-server.service';
 import { RealtimeGateway } from './adapters/realtime.gateway';
 
 import { RoomManagerService } from './rooms/room-manager.service';
+import { PartyRealtimeService } from './party/party-realtime.service';
 
 /**
- * RealtimeModule (Phase 6A & 6B)
+ * RealtimeModule (Phase 6A, 6B & 6C)
  * Transport abstraction layer, connection lifecycle, JWT authentication,
  * versioned protocol envelopes, request correlation, heartbeat monitoring,
- * and server-authoritative realtime room engine.
+ * server-authoritative room engine, and party realtime synchronization.
  */
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RoomManagerService } from './rooms/room-manager.service';
     RealtimeServerService,
     RealtimeGateway,
     RoomManagerService,
+    PartyRealtimeService,
   ],
   exports: [
     RealtimeAuthService,
@@ -34,6 +36,7 @@ import { RoomManagerService } from './rooms/room-manager.service';
     RealtimeServerService,
     RealtimeGateway,
     RoomManagerService,
+    PartyRealtimeService,
   ],
 })
 export class RealtimeModule {}
