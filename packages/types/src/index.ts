@@ -6,3 +6,4 @@ export * from './games';
 export * from './social';
 export * from './restaurant';
 export * from './runtime';
+export * from './realtime';
