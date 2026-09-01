@@ -8,7 +8,7 @@
     "build": "nest build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 10",
-    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/postgres.concurrency.spec.ts test/auth.e2e-flow.spec.ts test/companion.care.spec.ts test/economy.security.spec.ts test/social.contract.spec.ts test/phase4.real-postgres.spec.ts test/phase5.real-postgres.spec.ts test/refresh.spec.ts test/jwt.spec.ts test/onboarding.spec.ts test/oauth.spec.ts test/realtime.transport.spec.ts test/realtime.room.spec.ts test/realtime.party.spec.ts"
+    "test": "node --experimental-strip-types --test test/auth.security.spec.ts test/postgres.concurrency.spec.ts test/auth.e2e-flow.spec.ts test/companion.care.spec.ts test/economy.security.spec.ts test/social.contract.spec.ts test/phase4.real-postgres.spec.ts test/phase5.real-postgres.spec.ts test/refresh.spec.ts test/jwt.spec.ts test/onboarding.spec.ts test/oauth.spec.ts test/realtime.transport.spec.ts test/realtime.room.spec.ts test/realtime.party.spec.ts test/realtime.recovery.spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.11",

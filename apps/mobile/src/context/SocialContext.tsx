@@ -84,6 +84,16 @@ export function SocialProvider({ children }: { children: ReactNode }) {
 
     const realtimeClient = getSharedRealtimeClient();
 
+    // Phase 6D: configure token provider and resync recovery handler
+    realtimeClient.setTokenProvider(async () => {
+      return await AuthTokenStorage.getAccessToken();
+    });
+
+    realtimeClient.setResyncHandler(async () => {
+      // Reconcile authoritative state upon reconnect
+      await refreshSocial();
+    });
+
     // Connect realtime transport if not already connected
     const connectRealtime = async () => {
       try {

@@ -8,6 +8,22 @@ export type ConnectionState =
   | 'DISCONNECTING'
   | 'DISCONNECTED';
 
+export type RealtimeConnectionLifecycleState =
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'AUTHENTICATING'
+  | 'CONNECTED'
+  | 'RESYNCING'
+  | 'READY'
+  | 'FAILED';
+
+export const RECOVERY_CONSTANTS = {
+  INITIAL_RETRY_DELAY_MS: 500,
+  MAX_RETRY_DELAY_MS: 10_000,
+  JITTER_FACTOR: 0.20,
+  ROOM_DISCONNECT_GRACE_MS: 60_000,
+} as const;
+
 export interface ClientEventEnvelope<TPayload = unknown> {
   protocolVersion: string;
   event: string;
@@ -128,9 +144,12 @@ export const RoomErrorCodes = {
   ROOM_ACTION_RATE_LIMITED: 'ROOM_ACTION_RATE_LIMITED',
   NOT_AUTHORIZED: 'NOT_AUTHORIZED',
   INVALID_GAME_MODE: 'INVALID_GAME_MODE',
+  ROOM_UNAVAILABLE: 'ROOM_UNAVAILABLE',
 } as const;
 
 export type RoomErrorCode = (typeof RoomErrorCodes)[keyof typeof RoomErrorCodes];
+
+export type RoomParticipantStatus = 'CONNECTED' | 'DISCONNECTED_GRACE';
 
 export interface RoomParticipant {
   userId: string;
@@ -139,6 +158,7 @@ export interface RoomParticipant {
   joinedAt: number;
   isReady: boolean;
   role?: string;
+  status?: RoomParticipantStatus;
   customData?: Record<string, unknown>;
 }
 
@@ -148,6 +168,7 @@ export interface PublicRoomParticipantProjection {
   displayName?: string;
   isReady: boolean;
   joinedAt: number;
+  status?: RoomParticipantStatus;
 }
 
 export interface PublicRoomProjection {
@@ -192,6 +213,7 @@ export const RoomSystemEvents = {
   PLAYER_READY: 'room:player_ready',
   ROOM_CLOSED: 'room:closed',
   ACTION_RESULT: 'room:action_result',
+  ROOM_RECOVER: 'room:recover',
 } as const;
 
 export const PartySystemEvents = {

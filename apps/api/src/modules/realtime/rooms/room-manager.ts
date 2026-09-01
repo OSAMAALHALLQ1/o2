@@ -6,6 +6,7 @@ import {
   type RoomGameMode,
   type RoomParticipant,
   type RoomState,
+  RECOVERY_CONSTANTS,
   ROOM_CAPACITIES,
   ROOM_GAME_MODES,
   ROOM_LIMITS,
@@ -515,9 +516,18 @@ export class Room {
     this._version += 1;
     this._updatedAt = Date.now();
 
-    this.idempotency.set(action.actionId, actionResponse);
+    const responseWithMeta = {
+      actionId: action.actionId,
+      ...(typeof actionResponse === 'object' && actionResponse !== null ? actionResponse : { result: actionResponse }),
+    };
 
-    return actionResponse;
+    this.idempotency.set(action.actionId, responseWithMeta);
+
+    return responseWithMeta;
+  }
+
+  dispatchAction(action: RoomAction): Promise<unknown> {
+    return this.executor.execute(() => this.executeAction(action));
   }
 
   getPublicProjection(): PublicRoomProjection {
@@ -533,11 +543,51 @@ export class Room {
         displayName: p.displayName,
         isReady: p.isReady,
         joinedAt: p.joinedAt,
+        status: p.status ?? 'CONNECTED',
       })),
       version: this._version,
       createdAt: this.createdAt,
       updatedAt: this._updatedAt,
     };
+  }
+
+  handleParticipantDisconnect(userId: string): void {
+    const participant = this._participants.get(userId);
+    if (!participant) return;
+
+    participant.status = 'DISCONNECTED_GRACE';
+    this._version += 1;
+    this._updatedAt = Date.now();
+
+    // Schedule 60-second grace cancellation timer
+    this.timers.schedule(
+      `grace_${userId}`,
+      RECOVERY_CONSTANTS.ROOM_DISCONNECT_GRACE_MS,
+      () => {
+        const current = this._participants.get(userId);
+        if (current && current.status === 'DISCONNECTED_GRACE') {
+          if (this._state === 'WAITING' || this._state === 'READY') {
+            this.removeParticipant(userId);
+          }
+        }
+      },
+    );
+  }
+
+  recoverParticipant(userId: string): PlayerRoomProjection {
+    const participant = this._participants.get(userId);
+    if (!participant) {
+      throw new RoomError(RoomErrorCodes.NOT_ROOM_MEMBER, 'المستخدم ليس عضواً في الغرفة');
+    }
+
+    // Cancel pending grace timer
+    this.timers.cancel(`grace_${userId}`);
+
+    participant.status = 'CONNECTED';
+    this._version += 1;
+    this._updatedAt = Date.now();
+
+    return this.getPlayerProjection(userId);
   }
 
   getPlayerProjection(userId: string): PlayerRoomProjection {
@@ -604,6 +654,51 @@ export class RoomManager {
     const roomId = this.userToRoomId.get(userId);
     if (!roomId) return undefined;
     return this.getRoom(roomId);
+  }
+
+  handleParticipantDisconnect(userId: string): void {
+    const room = this.getUserRoom(userId);
+    if (!room) return;
+
+    room.handleParticipantDisconnect(userId);
+
+    this.broadcastToRoom(
+      room.roomId,
+      RoomSystemEvents.STATE_SYNC,
+      {
+        actionType: 'PARTICIPANT_DISCONNECTED',
+        actorUserId: userId,
+        version: room.version,
+        publicProjection: room.getPublicProjection(),
+      },
+    );
+  }
+
+  async recoverRoom(userId: string): Promise<PlayerRoomProjection> {
+    const room = this.getUserRoom(userId);
+    if (!room || room.state === 'CLOSED') {
+      throw new RoomError(
+        RoomErrorCodes.ROOM_UNAVAILABLE,
+        'الغرفة غير متاحة أو تم إعادة تعيينها',
+      );
+    }
+
+    return room.executor.execute(async () => {
+      const projection = room.recoverParticipant(userId);
+
+      this.broadcastToRoom(
+        room.roomId,
+        RoomSystemEvents.STATE_SYNC,
+        {
+          actionType: 'PARTICIPANT_RECOVERED',
+          actorUserId: userId,
+          version: room.version,
+          publicProjection: room.getPublicProjection(),
+        },
+      );
+
+      return projection;
+    });
   }
 
   async createRoom(
@@ -762,6 +857,7 @@ export class RoomManager {
     event: string,
     payload: T,
   ): void {
+    if (!this.realtimeServer) return;
     const room = this.rooms.get(roomId);
     if (!room) return;
 
@@ -776,6 +872,7 @@ export class RoomManager {
     event: string,
     payload: T,
   ): void {
+    if (!this.realtimeServer) return;
     const room = this.rooms.get(roomId);
     if (!room || !room.hasParticipant(userId)) return;
 

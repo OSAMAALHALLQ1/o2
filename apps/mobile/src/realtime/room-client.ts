@@ -55,6 +55,14 @@ export class MobileRoomClient {
     return envelope.payload;
   }
 
+  async recoverRoom(): Promise<PlayerRoomProjection> {
+    const envelope = await this.client.send<Record<string, never>, PlayerRoomProjection>(
+      RoomSystemEvents.ROOM_RECOVER,
+      {},
+    );
+    return envelope.payload;
+  }
+
   onRoomState(handler: (data: { version: number; publicProjection: PublicRoomProjection }) => void): () => void {
     return this.client.on(RoomSystemEvents.STATE_SYNC, (envelope) => {
       handler(envelope.payload as any);

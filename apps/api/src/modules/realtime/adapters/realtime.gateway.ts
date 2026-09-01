@@ -105,6 +105,11 @@ export class RealtimeGateway
       this.partyRealtime.unsubscribe(conn.userId, partyId);
       return { unsubscribed: true, partyId };
     });
+
+    // Register room recovery route (Phase 6D)
+    this.realtimeServer.on('room:recover', async (conn, _envelope) => {
+      return await this.roomManager.recoverRoom(conn.userId);
+    });
   }
 
   onModuleDestroy(): void {
@@ -157,6 +162,10 @@ export class RealtimeGateway
   handleDisconnect(socket: Socket): void {
     const connectionId = this.socketToConnection.get(socket.id);
     if (connectionId) {
+      const conn = this.realtimeServer.getConnection(connectionId);
+      if (conn) {
+        this.roomManager.handleParticipantDisconnect(conn.userId);
+      }
       this.realtimeServer.removeConnection(connectionId, 'TRANSPORT_DISCONNECT');
       this.socketToConnection.delete(socket.id);
       this.logger.debug(`Socket ${socket.id} disconnected (conn: ${connectionId})`);
