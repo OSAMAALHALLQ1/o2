@@ -749,6 +749,43 @@ export class RoomManager {
     return projection;
   }
 
+  async createMatchRoom(
+    gameMode: RoomGameMode,
+    participants: Array<{ userId: string; username: string; displayName?: string }>,
+  ): Promise<{ room: Room; projection: PublicRoomProjection }> {
+    if (!ROOM_GAME_MODES[gameMode]) {
+      throw new RoomError(
+        RoomErrorCodes.INVALID_GAME_MODE,
+        `نمط اللعبة غير مدعوم: ${gameMode}`,
+      );
+    }
+
+    const roomId = `room_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const hostUserId = participants[0]?.userId ?? 'system';
+    const room = new Room(roomId, gameMode, hostUserId);
+
+    room.setState('WAITING');
+
+    for (let i = 0; i < participants.length; i++) {
+      const p = participants[i];
+      const participant: RoomParticipant = {
+        userId: p.userId,
+        username: p.username,
+        displayName: p.displayName,
+        joinedAt: Date.now(),
+        isReady: true,
+        role: i === 0 ? 'HOST' : 'PLAYER',
+      };
+      room.addParticipant(participant);
+      this.userToRoomId.set(p.userId, roomId);
+    }
+
+    this.rooms.set(roomId, room);
+
+    const projection = room.getPublicProjection();
+    return { room, projection };
+  }
+
   async joinRoom(
     roomId: string,
     user: { userId: string; username: string; displayName?: string },

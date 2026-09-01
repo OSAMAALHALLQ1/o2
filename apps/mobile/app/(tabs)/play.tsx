@@ -12,9 +12,10 @@ import {
   useToast,
 } from '@o2/ui';
 import { mockGames } from '../../src/data/mockData';
-import { PartyGameMode } from '@o2/types';
+import { RoomGameMode } from '@o2/types';
 import { useAuth } from '../../src/context/AuthContext';
 import { useSocial } from '../../src/context/SocialContext';
+import { useMatchmaking } from '../../src/context/MatchmakingContext';
 
 export default function PlayScreen() {
   const { showToast } = useToast();
@@ -24,12 +25,66 @@ export default function PlayScreen() {
     inviteFriend, leaveParty, kickMember, setReady, selectGame,
     setCodeAccess, joinByCode, isLoading,
   } = useSocial();
+  const {
+    ticket,
+    match,
+    isQueued,
+    isMatching,
+    isMatched,
+    elapsedSeconds,
+    isLoading: isMatchmakingLoading,
+    joinQueue,
+    cancelQueue,
+    clearMatch,
+  } = useMatchmaking();
   const [partyCode, setPartyCode] = useState('');
 
-  const modeForSlug = (slug: string): PartyGameMode | null => ({
+  const modeForSlug = (slug: string): RoomGameMode | null => ({
     atrash: 'ATRASH', mafia: 'MAFIA_CLASSIC', tarneeb: 'TARNEEB',
     hide_seek: 'HIDE_AND_SEEK', imposter_sabotage: 'O2_IMPOSTER',
-  } as Record<string, PartyGameMode>)[slug] ?? null;
+  } as Record<string, RoomGameMode>)[slug] ?? null;
+
+  const handleQuickMatch = async (slug: string) => {
+    const mode = modeForSlug(slug);
+    if (!mode) return;
+    try {
+      await joinQueue(mode);
+      showToast({
+        type: 'info',
+        title: '🎯 جاري البحث عن مباراة',
+        message: 'تمت إضافتك إلى قائمة الانتظار.',
+      });
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'تعذر الانضمام',
+        message: err.message ?? 'حدث خطأ أثناء الانضمام لقائمة الانتظار',
+      });
+    }
+  };
+
+  const handleCancelQueue = async () => {
+    try {
+      await cancelQueue();
+      showToast({
+        type: 'info',
+        title: 'تم الإلغاء',
+        message: 'تم إلغاء البحث عن مباراة.',
+      });
+    } catch (err: any) {
+      showToast({
+        type: 'error',
+        title: 'خطأ',
+        message: err.message ?? 'تعذر إلغاء البحث',
+      });
+    }
+  };
+
+  const formatElapsed = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   const handleGameSelect = (gameTitle: string) => {
     showToast({
@@ -133,6 +188,63 @@ export default function PlayScreen() {
         )}
       </View>
 
+      {/* Active Matchmaking Queue Card */}
+      {(isQueued || isMatching) && (
+        <Card variant="goldBorder" style={styles.queueActiveCard}>
+          <View style={styles.queueHeaderRow}>
+            <View>
+              <Text style={styles.queueTitle}>⏳ جاري البحث عن لاعبين...</Text>
+              <Text style={styles.queueSubtitle}>
+                الوقت المنقضي: {formatElapsed(elapsedSeconds)}
+              </Text>
+            </View>
+            <Badge
+              label={ticket?.gameMode ?? 'مباراة'}
+              variant="gold"
+              size="sm"
+            />
+          </View>
+          <Text style={styles.queueHint}>
+            {ticket?.partyId
+              ? `المطابقة كمجموعة (${ticket.memberCount} لاعبين) ككتلة واحدة.`
+              : 'جاري البحث عن لاعبين متوافقين لإكمال سعة المباراة...'}
+          </Text>
+          <Button
+            label="إلغاء البحث"
+            variant="outline"
+            size="sm"
+            isLoading={isMatchmakingLoading}
+            onPress={handleCancelQueue}
+          />
+        </Card>
+      )}
+
+      {/* Match Found Card */}
+      {isMatched && match && (
+        <Card variant="highlight" style={styles.matchFoundCard}>
+          <View style={styles.queueHeaderRow}>
+            <View>
+              <Text style={styles.matchFoundTitle}>🎉 تم العثور على مباراة!</Text>
+              <Text style={styles.matchFoundSubtitle}>
+                الغرفة: {match.roomId} · نمط: {match.gameMode}
+              </Text>
+            </View>
+            <Badge label="جاهز" variant="primary" size="sm" />
+          </View>
+          <View style={styles.matchParticipantsRow}>
+            <Text style={styles.partyHint}>
+              اللاعبون ({match.participants.length}):{' '}
+              {match.participants.map((p) => p.displayName ?? p.username).join('، ')}
+            </Text>
+          </View>
+          <Button
+            label="حسناً"
+            size="sm"
+            onPress={clearMatch}
+          />
+        </Card>
+      )}
+
       {/* Matchmaking Mode Badge */}
       <View style={styles.bannerContainer}>
         <Card variant="highlight" style={styles.banner}>
@@ -182,14 +294,11 @@ export default function PlayScreen() {
 
             <View style={styles.gameActionRow}>
               <Button
-                label="دخول المطابقة السريعة"
+                label={isQueued && ticket?.gameMode === modeForSlug(game.slug) ? 'في الانتظار...' : 'دخول المطابقة السريعة'}
                 variant="primary"
                 size="sm"
-                onPress={() => {
-                  const mode = modeForSlug(game.slug);
-                  if (party && party.leaderId === user?.id && mode) void selectGame(mode);
-                  else handleGameSelect(game.nameKey);
-                }}
+                disabled={isQueued || isMatching}
+                onPress={() => handleQuickMatch(game.slug)}
                 style={styles.playBtn}
               />
               <Button
@@ -323,5 +432,56 @@ const styles = StyleSheet.create({
   },
   privateBtn: {
     minWidth: 100,
+  },
+  queueActiveCard: {
+    gap: spacing.sm,
+    backgroundColor: colors.surfaces.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: colors.brand.primary,
+  },
+  queueHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  queueTitle: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: typography.fontSize.md,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.text.primary,
+  },
+  queueSubtitle: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.xs,
+    color: colors.brand.accent,
+    marginTop: 2,
+  },
+  queueHint: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.xs,
+    color: colors.text.secondary,
+    lineHeight: 18,
+  },
+  matchFoundCard: {
+    gap: spacing.sm,
+    backgroundColor: colors.surfaces.surfaceHighlight,
+    borderWidth: 1,
+    borderColor: colors.semantic.success,
+  },
+  matchFoundTitle: {
+    fontFamily: typography.fontFamily.heading,
+    fontSize: typography.fontSize.md,
+    fontWeight: typography.fontWeight.bold,
+    color: colors.semantic.success,
+  },
+  matchFoundSubtitle: {
+    fontFamily: typography.fontFamily.body,
+    fontSize: typography.fontSize.xs,
+    color: colors.text.secondary,
+    marginTop: 2,
+  },
+  matchParticipantsRow: {
+    paddingVertical: spacing.xxs,
   },
 });

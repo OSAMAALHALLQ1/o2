@@ -12,7 +12,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 10",
-    "test": "node --experimental-strip-types --test test/companion.simulation.spec.ts test/economy.simulation.spec.ts test/social.rules.spec.ts"
+    "test": "node --experimental-strip-types --test test/companion.simulation.spec.ts test/economy.simulation.spec.ts test/social.rules.spec.ts test/matchmaking.rules.spec.ts"
   },
   "dependencies": {
     "@o2/types": "workspace:*"

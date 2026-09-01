@@ -159,6 +159,7 @@ model User {
   partyMembership        PartyMember?
   sentPartyInvites       PartyInvite[]   @relation("PartyInviter")
   receivedPartyInvites   PartyInvite[]   @relation("PartyInvitee")
+  matchmakingMemberships MatchmakingTicketMember[]
 
   @@map("users")
 }
@@ -614,4 +615,53 @@ model PartyInvite {
   @@index([inviteeId, status, createdAt])
   @@index([partyId, status])
   @@map("party_invites")
+}
+
+// ==========================================
+// PHASE 6E: MATCHMAKING FOUNDATION
+// ==========================================
+
+enum MatchmakingTicketStatus {
+  QUEUED
+  MATCHING
+  MATCHED
+  CANCELLED
+  EXPIRED
+  FAILED
+}
+
+model MatchmakingTicket {
+  id           String                  @id @default(uuid())
+  gameMode     PartyGameMode
+  status       MatchmakingTicketStatus @default(QUEUED)
+  partyId      String?
+  partyVersion Int?
+  leaderUserId String
+  memberCount  Int                     @default(1)
+  matchId      String?
+  roomId       String?
+  expiresAt    DateTime
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  members MatchmakingTicketMember[]
+
+  @@index([gameMode, status, createdAt])
+  @@index([leaderUserId, status])
+  @@index([partyId, status])
+  @@map("matchmaking_tickets")
+}
+
+model MatchmakingTicketMember {
+  id        String   @id @default(uuid())
+  ticketId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  ticket MatchmakingTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, userId])
+  @@index([userId])
+  @@map("matchmaking_ticket_members")
 }

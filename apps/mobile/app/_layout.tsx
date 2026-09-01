@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { CompanionProvider } from '../src/context/CompanionContext';
 import { EconomyProvider } from '../src/context/EconomyContext';
 import { SocialProvider } from '../src/context/SocialContext';
+import { MatchmakingProvider } from '../src/context/MatchmakingContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -60,8 +61,10 @@ export default function RootLayout() {
           <CompanionProvider>
             <EconomyProvider>
               <SocialProvider>
-                <StatusBar style="light" />
-                <RootNavigation />
+                <MatchmakingProvider>
+                  <StatusBar style="light" />
+                  <RootNavigation />
+                </MatchmakingProvider>
               </SocialProvider>
             </EconomyProvider>
           </CompanionProvider>
