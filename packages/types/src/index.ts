@@ -8,3 +8,4 @@ export * from './restaurant';
 export * from './runtime';
 export * from './realtime';
 export * from './matchmaking';
+export * from './voice';

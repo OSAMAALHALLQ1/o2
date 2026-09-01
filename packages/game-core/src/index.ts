@@ -6,3 +6,4 @@ export * from './economy/consumables.engine';
 export * from './economy/error.codes';
 export * from './social/social.rules';
 export * from './matchmaking/matchmaking.rules';
+export * from './voice/voice.rules';

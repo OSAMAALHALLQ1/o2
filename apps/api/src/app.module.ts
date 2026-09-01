@@ -13,6 +13,7 @@ import { SocialModule } from './modules/social/social.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { GameRoomModule } from './modules/game-room/game-room.module';
 import { MatchmakingModule } from './modules/matchmaking/matchmaking.module';
+import { VoiceModule } from './modules/voice/voice.module';
 import { RestaurantIntegrationModule } from './modules/restaurant-integration/restaurant-integration.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { NotificationModule } from './modules/notification/notification.module';
@@ -42,6 +43,7 @@ import { NotificationModule } from './modules/notification/notification.module';
     RealtimeModule,
     GameRoomModule,
     MatchmakingModule,
+    VoiceModule,
     RestaurantIntegrationModule,
     AdminModule,
     NotificationModule,

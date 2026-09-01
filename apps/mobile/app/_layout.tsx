@@ -8,6 +8,7 @@ import { CompanionProvider } from '../src/context/CompanionContext';
 import { EconomyProvider } from '../src/context/EconomyContext';
 import { SocialProvider } from '../src/context/SocialContext';
 import { MatchmakingProvider } from '../src/context/MatchmakingContext';
+import { VoiceProvider } from '../src/context/VoiceContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -62,8 +63,10 @@ export default function RootLayout() {
             <EconomyProvider>
               <SocialProvider>
                 <MatchmakingProvider>
-                  <StatusBar style="light" />
-                  <RootNavigation />
+                  <VoiceProvider>
+                    <StatusBar style="light" />
+                    <RootNavigation />
+                  </VoiceProvider>
                 </MatchmakingProvider>
               </SocialProvider>
             </EconomyProvider>
