@@ -9,6 +9,7 @@ import { EconomyProvider } from '../src/context/EconomyContext';
 import { SocialProvider } from '../src/context/SocialContext';
 import { MatchmakingProvider } from '../src/context/MatchmakingContext';
 import { VoiceProvider } from '../src/context/VoiceContext';
+import { AtrashGameProvider } from '../src/context/AtrashGameContext';
 
 function RootNavigation() {
   const { authState } = useAuth();
@@ -50,6 +51,7 @@ function RootNavigation() {
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="game/atrash" options={{ headerShown: false }} />
     </Stack>
   );
 }
@@ -64,8 +66,10 @@ export default function RootLayout() {
               <SocialProvider>
                 <MatchmakingProvider>
                   <VoiceProvider>
-                    <StatusBar style="light" />
-                    <RootNavigation />
+                    <AtrashGameProvider>
+                      <StatusBar style="light" />
+                      <RootNavigation />
+                    </AtrashGameProvider>
                   </VoiceProvider>
                 </MatchmakingProvider>
               </SocialProvider>

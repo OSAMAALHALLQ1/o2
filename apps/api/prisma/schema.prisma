@@ -665,3 +665,24 @@ model MatchmakingTicketMember {
   @@index([userId])
   @@map("matchmaking_ticket_members")
 }
+
+// ==========================================
+// PHASE 7: GAME MATCH HISTORY
+// ==========================================
+
+model GameMatchHistory {
+  id           String        @id @default(uuid())
+  matchId      String        @unique
+  gameMode     PartyGameMode
+  roomId       String
+  winnerUserId String
+  participants Json
+  finalScores  Json
+  totalRounds  Int
+  completedAt  DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+
+  @@index([gameMode, completedAt])
+  @@index([winnerUserId])
+  @@map("game_match_history")
+}

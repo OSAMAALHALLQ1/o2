@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 import {
   ScreenContainer,
   Card,
@@ -18,6 +19,7 @@ import { useSocial } from '../../src/context/SocialContext';
 import { useMatchmaking } from '../../src/context/MatchmakingContext';
 
 export default function PlayScreen() {
+  const router = useRouter();
   const { showToast } = useToast();
   const { user } = useAuth();
   const {
@@ -237,11 +239,28 @@ export default function PlayScreen() {
               {match.participants.map((p) => p.displayName ?? p.username).join('، ')}
             </Text>
           </View>
-          <Button
-            label="حسناً"
-            size="sm"
-            onPress={clearMatch}
-          />
+          <View style={styles.gameActionRow}>
+            <Button
+              label={match.gameMode === 'ATRASH' ? 'دخول طاولة أطرش بالزفة 🎮' : 'دخول الغرفة'}
+              variant="primary"
+              size="sm"
+              onPress={() => {
+                if (match.gameMode === 'ATRASH') {
+                  router.push('/game/atrash' as any);
+                } else {
+                  clearMatch();
+                }
+              }}
+              style={styles.playBtn}
+            />
+            <Button
+              label="إلغاء"
+              variant="outline"
+              size="sm"
+              onPress={clearMatch}
+              style={styles.privateBtn}
+            />
+          </View>
         </Card>
       )}
 
@@ -305,7 +324,13 @@ export default function PlayScreen() {
                 label="غرفة خاصة"
                 variant="secondary"
                 size="sm"
-                onPress={() => handleGameSelect(game.nameKey)}
+                onPress={() => {
+                  if (game.slug === 'atrash') {
+                    router.push('/game/atrash' as any);
+                  } else {
+                    handleGameSelect(game.nameKey);
+                  }
+                }}
                 style={styles.privateBtn}
               />
             </View>

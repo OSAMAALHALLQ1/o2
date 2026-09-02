@@ -9,12 +9,14 @@ import { RealtimeGateway } from './adapters/realtime.gateway';
 
 import { RoomManagerService } from './rooms/room-manager.service';
 import { PartyRealtimeService } from './party/party-realtime.service';
+import { GameHistoryService } from './rooms/atrash/game-history.service';
 
 /**
- * RealtimeModule (Phase 6A, 6B & 6C)
+ * RealtimeModule (Phase 6A, 6B, 6C & Phase 7)
  * Transport abstraction layer, connection lifecycle, JWT authentication,
  * versioned protocol envelopes, request correlation, heartbeat monitoring,
- * server-authoritative room engine, and party realtime synchronization.
+ * server-authoritative room engine, party realtime synchronization,
+ * and game match history persistence.
  */
 @Module({
   imports: [
@@ -29,6 +31,7 @@ import { PartyRealtimeService } from './party/party-realtime.service';
     RealtimeGateway,
     RoomManagerService,
     PartyRealtimeService,
+    GameHistoryService,
   ],
   exports: [
     RealtimeAuthService,
@@ -37,6 +40,7 @@ import { PartyRealtimeService } from './party/party-realtime.service';
     RealtimeGateway,
     RoomManagerService,
     PartyRealtimeService,
+    GameHistoryService,
   ],
 })
 export class RealtimeModule {}

@@ -9,3 +9,4 @@ export * from './runtime';
 export * from './realtime';
 export * from './matchmaking';
 export * from './voice';
+export * from './atrash';

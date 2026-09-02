@@ -223,6 +223,7 @@ export class RoomTimerRegistry {
         // Safe catch for timer failures
       }
     }, delayMs);
+    timeoutHandle.unref?.();
 
     this.timers.set(timerId, {
       timerId,
@@ -274,6 +275,11 @@ export interface IRoomEngineAdapter<TState = unknown, TPlayerProj = unknown> {
   applyAction(state: TState, action: RoomAction): EngineActionResult<TState>;
   getPublicProjection(state: TState): unknown;
   getPlayerProjection(state: TState, userId: string): TPlayerProj;
+  onParticipantAdded?(participant: RoomParticipant, allParticipants: RoomParticipant[]): void;
+  onParticipantDisconnect?(userId: string): void;
+  onParticipantReconnect?(userId: string): void;
+  onRoomReady?(room: Room): void;
+  bindRoom?(room: Room): void;
 }
 
 export interface GenericRoomState {
@@ -407,6 +413,8 @@ export class Room {
     this.timers = new RoomTimerRegistry(roomId, this.executor);
 
     this.engineAdapter = engineAdapter ?? new GenericRoomEngine(gameMode);
+    this.engineAdapter.bindRoom?.(this);
+
     this._engineState = this.engineAdapter.createInitialState();
   }
 
@@ -461,10 +469,12 @@ export class Room {
     this._participants.set(participant.userId, participant);
     this._version += 1;
     this._updatedAt = Date.now();
+    this.engineAdapter.onParticipantAdded?.(participant, Array.from(this._participants.values()));
 
     // If room is WAITING and reaches capacity, transition to READY
     if (this._state === 'WAITING' && this._participants.size >= this.capacity) {
       this.setState('READY');
+      this.engineAdapter.onRoomReady?.(this);
     }
   }
 
@@ -559,6 +569,8 @@ export class Room {
     this._version += 1;
     this._updatedAt = Date.now();
 
+    this.engineAdapter.onParticipantDisconnect?.(userId);
+
     // Schedule 60-second grace cancellation timer
     this.timers.schedule(
       `grace_${userId}`,
@@ -587,6 +599,8 @@ export class Room {
       participant.status = 'CONNECTED';
       this._updatedAt = Date.now();
     }
+
+    this.engineAdapter.onParticipantReconnect?.(userId);
 
     return this.getPlayerProjection(userId);
   }
@@ -632,9 +646,28 @@ export class RoomManager {
   private readonly rooms = new Map<string, Room>();
   private readonly userToRoomId = new Map<string, string>();
   private readonly realtimeServer: RealtimeServer;
+  private readonly adapterFactories = new Map<
+    RoomGameMode,
+    (roomId: string, server?: RealtimeServer) => IRoomEngineAdapter
+  >();
 
   constructor(realtimeServer: RealtimeServer) {
     this.realtimeServer = realtimeServer;
+  }
+
+  registerAdapterFactory(
+    gameMode: RoomGameMode,
+    factory: (roomId: string, server?: RealtimeServer) => IRoomEngineAdapter,
+  ): void {
+    this.adapterFactories.set(gameMode, factory);
+  }
+
+  getAdapterForGameMode(roomId: string, gameMode: RoomGameMode): IRoomEngineAdapter {
+    const factory = this.adapterFactories.get(gameMode);
+    if (factory) {
+      return factory(roomId, this.realtimeServer);
+    }
+    return new GenericRoomEngine(gameMode);
   }
 
   get roomCount(): number {
@@ -719,11 +752,12 @@ export class RoomManager {
     }
 
     const roomId = `room_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const engineAdapter = this.getAdapterForGameMode(roomId, gameMode);
     const room = new Room(
       roomId,
       gameMode,
       creator.userId,
-      undefined,
+      engineAdapter,
       customCapacity,
     );
 
@@ -762,7 +796,8 @@ export class RoomManager {
 
     const roomId = `room_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const hostUserId = participants[0]?.userId ?? 'system';
-    const room = new Room(roomId, gameMode, hostUserId);
+    const engineAdapter = this.getAdapterForGameMode(roomId, gameMode);
+    const room = new Room(roomId, gameMode, hostUserId, engineAdapter);
 
     room.setState('WAITING');
 
