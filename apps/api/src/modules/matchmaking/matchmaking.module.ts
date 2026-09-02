@@ -5,6 +5,7 @@ import { MatchmakingController } from './matchmaking.controller';
 import { MatchmakingService } from './matchmaking.service';
 import { MatchmakingEngineService } from './matchmaking-engine.service';
 import { MatchmakingRealtimeService } from './matchmaking-realtime.service';
+import { AuthModule } from '../../auth/auth.module';
 
 /**
  * MatchmakingModule (Phase 6E)
@@ -12,7 +13,7 @@ import { MatchmakingRealtimeService } from './matchmaking-realtime.service';
  * party-as-unit grouping, snapshot revalidation, and room allocation.
  */
 @Module({
-  imports: [PrismaModule, RealtimeModule],
+  imports: [PrismaModule, RealtimeModule, AuthModule],
   controllers: [MatchmakingController],
   providers: [
     MatchmakingRealtimeService,
