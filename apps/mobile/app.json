@@ -29,8 +29,16 @@
     "extra": {
       "supportsRTL": true,
       "eas": {
-        "projectId": "81171248-8fe0-4201-85e4-364fd808fa96"
-      }
+        "projectId": "9f6c1deb-bfe1-4aaf-9a96-4b3e96cb9e4d"
+      },
+      "router": {}
+    },
+    "owner": "osaco",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9f6c1deb-bfe1-4aaf-9a96-4b3e96cb9e4d"
     }
   }
 }
